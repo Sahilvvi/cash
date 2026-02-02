@@ -1,0 +1,14 @@
+{
+  "name": "add-admin-script",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "add-admin": "tsx scripts/add-admin.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0"
+  }
+}

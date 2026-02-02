@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tracking System Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+        .card {
+            background: #1e293b;
+            padding: 24px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #334155;
+        }
+        h1 { color: #f59e0b; margin-bottom: 10px; }
+        h2 { color: #10b981; margin-top: 0; }
+        .status { 
+            padding: 8px 16px; 
+            border-radius: 6px; 
+            display: inline-block; 
+            margin: 8px 0;
+            font-weight: 600;
+        }
+        .status.working { background: #10b981; color: white; }
+        .status.needs-setup { background: #f59e0b; color: white; }
+        .status.not-ready { background: #ef4444; color: white; }
+        button {
+            background: #f59e0b;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            margin: 8px 8px 8px 0;
+        }
+        button:hover { background: #d97706; }
+        pre {
+            background: #0f172a;
+            padding: 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            border: 1px solid #334155;
+        }
+        code { color: #10b981; }
+        .info { color: #94a3b8; margin: 12px 0; }
+        a { color: #3b82f6; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        input {
+            background: #0f172a;
+            border: 1px solid #334155;
+            color: #e2e8f0;
+            padding: 10px;
+            border-radius: 6px;
+            width: 100%;
+            margin: 8px 0;
+            font-family: monospace;
+        }
+        .result {
+            margin-top: 16px;
+            padding: 12px;
+            background: #0f172a;
+            border-radius: 6px;
+            border-left: 4px solid #10b981;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎯 Cashback Tracking System - Test Dashboard</h1>
+    
+    <div class="card">
+        <h2>Current Status</h2>
+        <div>
+            <strong>Click Tracking:</strong> <span class="status working">✓ Working</span>
+            <p class="info">Users can click stores and tracking is recorded</p>
+        </div>
+        <div>
+            <strong>Conversion Tracking (Postback):</strong> <span class="status working">✓ Working</span>
+            <p class="info">Ready to receive webhooks from merchants</p>
+        </div>
+        <div>
+            <strong>Amazon API Integration:</strong> <span class="status needs-setup">⚠ Needs API Keys</span>
+            <p class="info">Requires Amazon Associates credentials</p>
+        </div>
+        <div>
+            <strong>Flipkart API Integration:</strong> <span class="status needs-setup">⚠ Needs API Keys</span>
+            <p class="info">Requires Flipkart Affiliate credentials</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Quick Test: Tracking Flow</h2>
+        <ol>
+            <li>Visit your app at: <a href="http://localhost:5173" target="_blank">http://localhost:5173</a></li>
+            <li>Login with your credentials</li>
+            <li>Go to the <strong>Stores</strong> page</li>
+            <li>Click any <strong>"Shop Now"</strong> button</li>
+            <li>Check the redirect URL - it should have tracking parameters like <code>?subid=xyz</code></li>
+        </ol>
+        
+        <button onclick="window.open('http://localhost:5173/stores', '_blank')">Open Stores Page</button>
+    </div>
+
+    <div class="card">
+        <h2>View Tracked Data</h2>
+        <p class="info">After clicking "Shop Now", view your tracking data:</p>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <button onclick="window.open('http://localhost:5173/dashboard', '_blank')">
+                📊 User Dashboard<br><small style="opacity: 0.8; font-weight: normal;">(View your clicks)</small>
+            </button>
+            <button onclick="window.open('http://localhost:5173/admin', '_blank')">
+                👨‍💼 Admin Panel<br><small style="opacity: 0.8; font-weight: normal;">(View all tracking)</small>
+            </button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Test Conversion (Simulate Merchant Postback)</h2>
+        <p class="info">Simulate a merchant confirming a purchase and sending cashback:</p>
+        
+        <label for="sessionId">Session ID (from affiliate_clicks table):</label>
+        <input type="text" id="sessionId" placeholder="e.g., 550e8400-e29b-41d4-a716-446655440000">
+        
+        <label for="amount">Cashback Amount:</label>
+        <input type="number" id="amount" value="50" step="0.01">
+        
+        <label for="orderId">Order ID:</label>
+        <input type="text" id="orderId" value="TEST-ORDER-123">
+        
+        <button onclick="sendTestConversion()">Send Test Conversion</button>
+        
+        <div id="result" style="display: none;" class="result"></div>
+    </div>
+
+    <div class="card">
+        <h2>SQL Query: View Recent Clicks</h2>
+        <p class="info">Run this in your Supabase SQL editor to see tracked clicks:</p>
+        <pre><code>SELECT 
+    ac.session_id,
+    ac.clicked_at,
+    p.email as user_email,
+    s.name as store_name
+FROM affiliate_clicks ac
+LEFT JOIN profiles p ON p.user_id = ac.user_id
+LEFT JOIN stores s ON s.id = ac.store_id
+ORDER BY ac.clicked_at DESC
+LIMIT 10;</code></pre>
+        <button onclick="window.open('https://supabase.com/dashboard/project/rmdmcfgifglvtpbmcxov/editor', '_blank')">
+            Open Supabase SQL Editor
+        </button>
+    </div>
+
+    <div class="card">
+        <h2>Next Steps for Full Amazon/Flipkart Integration</h2>
+        <ol>
+            <li><strong>Sign up</strong> for Amazon Associates & Flipkart Affiliate programs</li>
+            <li><strong>Get API credentials</strong> (tracking IDs, API keys)</li>
+            <li><strong>Update store configuration</strong> in database with credentials</li>
+            <li><strong>Deploy</strong> the edge functions to Supabase</li>
+            <li><strong>Set up Cron</strong> to run fetch-conversions every hour</li>
+        </ol>
+        <pre><code>-- Example: Configure Amazon store
+UPDATE stores 
+SET network_type = 'amazon_direct',
+    api_config = '{"tracking_id": "yoursite-20"}'
+WHERE slug = 'amazon';</code></pre>
+    </div>
+
+    <script>
+        const SUPABASE_URL = 'https://rmdmcfgifglvtpbmcxov.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJtZG1jZmdpZmdsdnRwYm1jeG92Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMzg0NzEsImV4cCI6MjA4MjcxNDQ3MX0.LYt63L0FF-QO3rUFNMsm1kNCHEWOZM7dXKhyGmNuZVA';
+
+        async function sendTestConversion() {
+            const sessionId = document.getElementById('sessionId').value;
+            const amount = document.getElementById('amount').value;
+            const orderId = document.getElementById('orderId').value;
+            const resultDiv = document.getElementById('result');
+
+            if (!sessionId) {
+                alert('Please enter a Session ID from the database');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${SUPABASE_URL}/functions/v1/track-conversion`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': SUPABASE_KEY
+                    },
+                    body: JSON.stringify({
+                        subid: sessionId,
+                        amount: parseFloat(amount),
+                        order_id: orderId,
+                        status: 'confirmed'
+                    })
+                });
+
+                const data = await response.json();
+                
+                resultDiv.style.display = 'block';
+                if (response.ok) {
+                    resultDiv.innerHTML = `
+                        <strong style="color: #10b981;">✓ Success!</strong><br>
+                        Cashback transaction created.<br>
+                        <small>Check the dashboard to see the new transaction.</small>
+                    `;
+                    resultDiv.style.borderColor = '#10b981';
+                } else {
+                    resultDiv.innerHTML = `
+                        <strong style="color: #ef4444;">✗ Error</strong><br>
+                        ${data.error || 'Unknown error'}<br>
+                        <small>Make sure the session_id exists in affiliate_clicks table.</small>
+                    `;
+                    resultDiv.style.borderColor = '#ef4444';
+                }
+            } catch (error) {
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = `
+                    <strong style="color: #ef4444;">✗ Network Error</strong><br>
+                    ${error.message}<br>
+                    <small>Make sure the edge function is deployed.</small>
+                `;
+                resultDiv.style.borderColor = '#ef4444';
+            }
+        }
+    </script>
+</body>
+</html>
