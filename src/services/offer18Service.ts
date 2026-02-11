@@ -302,36 +302,50 @@ class Offer18Service {
     /**
      * Convert Offer18 offer to Store format for database
      */
-    convertToStore(offer: Offer18Offer): {
-        name: string;
-        slug: string;
-        description: string;
-        logo_url: string;
-        cashback_percent: number;
-        cashback_type: string;
-        category: string;
-        affiliate_url: string;
-        network_type: string;
-        api_config: any;
-    } {
+    /**
+     * Convert Offer18 offer to Store format for database
+     */
+    convertToStore(offer: Offer18Offer) {
         // Extract the best payout
-        const bestPayout = offer.payout[0];
-        const cashbackPercent = parseFloat(bestPayout?.payout || '0');
+        const bestPayout = offer.payout && offer.payout.length > 0 ? offer.payout[0] : null;
+        // Parse payout, handle if it's a percentage or fixed amount based on model
+        let cashbackPercent = 0;
+        let cashbackType = 'percent'; // default
+
+        // Logic to determine cashback type and value
+        // Offer18 models: CPA, CPC, CPL, CPS, CPM
+        // CPS usually implies percentage, others are usually fixed amounts (flat)
+
+        if (bestPayout) {
+            const payoutValue = parseFloat(bestPayout.payout);
+            if (!isNaN(payoutValue)) {
+                cashbackPercent = payoutValue;
+            }
+
+            if (offer.model === 'CPS') {
+                cashbackType = 'percent';
+            } else {
+                cashbackType = 'flat'; // CPA, CPC, CPL etc are typically flat rates
+            }
+        }
 
         // Generate slug from name
+        // Ensure unique slug logic is handled by DB or caller if duplicates exist
         const slug = offer.name
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '');
 
+        // Map to Supabase 'stores' table structure
         return {
             name: offer.name,
-            slug: slug,
+            slug: slug, // This might need uniqueness check in real app
             description: offer.offer_terms || offer.offer_kpi || `${offer.name} - ${offer.model} offer`,
             logo_url: offer.logo,
             cashback_percent: cashbackPercent,
-            cashback_type: offer.model,
-            category: offer.category.split(',')[0].trim() || 'general',
+            cashback_type: cashbackType,
+            category: offer.category ? offer.category.split(',')[0].trim() : 'General',
+            // critical: affiliate_url is the tracking link
             affiliate_url: offer.click_url,
             network_type: 'offer18',
             api_config: {
