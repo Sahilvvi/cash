@@ -117,7 +117,7 @@ export function AdminOffer18() {
                 fetchedOffers = await offer18Service.fetchActiveOffers();
             } else {
                 const response = await offer18Service.fetchOffers();
-                fetchedOffers = Object.values(response.data);
+                fetchedOffers = Object.values(response.data || {});
             }
 
             setOffers(fetchedOffers);
@@ -130,21 +130,28 @@ export function AdminOffer18() {
                 synced: 0,
             });
 
-            toast.success(`Fetched ${fetchedOffers.length} offers from Offer18`);
+            if (fetchedOffers.length > 0) {
+                toast.success(`Fetched ${fetchedOffers.length} offers from Offer18`);
+            } else {
+                toast.info('No offers found matching criteria');
+            }
+
+            return fetchedOffers;
         } catch (error) {
             console.error('Fetch offers error:', error);
             toast.error('Failed to fetch offers: ' + (error as Error).message);
+            return [];
         } finally {
             setIsSyncing(false);
         }
     };
 
-    const handleSyncToDatabase = async (selectedOffers?: Offer18Offer[]) => {
+    const handleSyncToDatabase = async (selectedOffers: Offer18Offer[]) => {
         try {
             setIsSyncing(true);
-            const offersToSync = selectedOffers || offers;
+            const offersToSync = selectedOffers;
 
-            if (offersToSync.length === 0) {
+            if (!offersToSync || offersToSync.length === 0) {
                 toast.error('No offers to sync');
                 return;
             }
@@ -216,13 +223,17 @@ export function AdminOffer18() {
     };
 
     const handleSyncActiveOffers = async () => {
-        await handleFetchOffers({ activeOnly: true });
-        await handleSyncToDatabase();
+        const fetchedOffers = await handleFetchOffers({ activeOnly: true });
+        if (fetchedOffers && fetchedOffers.length > 0) {
+            await handleSyncToDatabase(fetchedOffers);
+        }
     };
 
     const handleSyncAuthorizedOffers = async () => {
-        await handleFetchOffers({ authorizedOnly: true });
-        await handleSyncToDatabase();
+        const fetchedOffers = await handleFetchOffers({ authorizedOnly: true });
+        if (fetchedOffers && fetchedOffers.length > 0) {
+            await handleSyncToDatabase(fetchedOffers);
+        }
     };
 
     return (
