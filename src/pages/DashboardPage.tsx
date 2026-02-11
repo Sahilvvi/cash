@@ -145,12 +145,13 @@ const DashboardPage = () => {
   }, [user, queryClient]);
 
   // Redirect if not logged in
-  if (!isLoading && !user) {
-    navigate("/auth?mode=login");
-    return null;
-  }
+  useEffect(() => {
+    if (!isLoading && !user) {
+      navigate("/auth?mode=login");
+    }
+  }, [isLoading, user, navigate]);
 
-  if (isLoading) {
+  if (isLoading || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>

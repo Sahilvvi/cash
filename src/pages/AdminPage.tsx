@@ -649,12 +649,13 @@ const AdminPage = () => {
   const CHART_COLORS = ['hsl(var(--primary))', 'hsl(var(--success))', 'hsl(var(--warning))', 'hsl(var(--destructive))'];
 
   // Redirect if not admin
-  if (!isLoading && (!user || !isAdmin)) {
-    navigate("/admin/login");
-    return null;
-  }
+  useEffect(() => {
+    if (!isLoading && (!user || !isAdmin)) {
+      navigate("/admin/login");
+    }
+  }, [isLoading, user, isAdmin, navigate]);
 
-  if (isLoading) {
+  if (isLoading || !user || !isAdmin) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>

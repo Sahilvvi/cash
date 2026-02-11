@@ -40,7 +40,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       .select("*")
       .eq("user_id", userId)
       .maybeSingle();
-    
+
     if (!error && data) {
       setProfile(data);
     }
@@ -52,13 +52,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       .select("id")
       .eq("user_id", userId)
       .maybeSingle();
-    
+
     if (error) {
       console.error("Error checking admin status:", error);
       setIsAdmin(false);
       return;
     }
-    
+
     setIsAdmin(!!data);
   };
 
@@ -68,7 +68,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
-        
+
         if (session?.user) {
           // Defer Supabase calls to avoid deadlock
           setTimeout(() => {
@@ -83,13 +83,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     );
 
     // Check for existing session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
-      
+
       if (session?.user) {
-        fetchProfile(session.user.id);
-        checkAdmin(session.user.id);
+        await Promise.all([
+          fetchProfile(session.user.id),
+          checkAdmin(session.user.id)
+        ]);
       }
       setIsLoading(false);
     });
@@ -99,7 +101,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signUp = async (email: string, password: string, fullName?: string, referralCode?: string) => {
     const redirectUrl = `${window.location.origin}/`;
-    
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
