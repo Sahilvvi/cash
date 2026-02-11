@@ -149,50 +149,52 @@ export function AdminOffer18() {
                 return;
             }
 
+            // Prepare all data first
+            const storeDataList = offersToSync.map(offer => {
+                const storeData = offer18Service.convertToStore(offer);
+                return {
+                    ...storeData,
+                    updated_at: new Date().toISOString(),
+                    // Default fields that are required by the schema but might default if omitted
+                    // However upsert requires full row or partial row. 
+                    // Since schema defines defaults for these, we can omit them if we want to rely on DB defaults for NEW rows,
+                    // but for UPDATES we might overwrite them.
+                    // Let's explicitly set key fields
+                    is_active: true,
+                    // offer18 specific
+                    offer18_offer_id: offer.offerid,
+                    network_type: 'offer18',
+                    offers_count: 1
+                };
+            });
+
+            // Process in batches of 50 to avoid payload limits
+            const BATCH_SIZE = 50;
             let successCount = 0;
             let errorCount = 0;
 
-            for (const offer of offersToSync) {
+            for (let i = 0; i < storeDataList.length; i += BATCH_SIZE) {
+                const batch = storeDataList.slice(i, i + BATCH_SIZE);
+
                 try {
-                    const storeData = offer18Service.convertToStore(offer);
-
-                    // Check if store already exists
-                    const { data: existingStore } = await supabase
+                    // Use upsert to insert or update based on 'slug' (which is UNIQUE in DB)
+                    const { error } = await supabase
                         .from('stores')
-                        .select('id')
-                        .eq('slug', storeData.slug)
-                        .maybeSingle();
+                        .upsert(batch, {
+                            onConflict: 'slug',
+                            ignoreDuplicates: false
+                        });
 
-                    if (existingStore) {
-                        // Update existing store
-                        const { error } = await supabase
-                            .from('stores')
-                            .update({
-                                ...storeData,
-                                updated_at: new Date().toISOString(),
-                            })
-                            .eq('id', existingStore.id);
-
-                        if (error) throw error;
+                    if (error) {
+                        console.error('Batch sync error:', error);
+                        errorCount += batch.length;
+                        toast.error(`Batch failed: ${error.message}`);
                     } else {
-                        // Insert new store
-                        const { error } = await supabase
-                            .from('stores')
-                            .insert({
-                                ...storeData,
-                                is_active: true,
-                                is_trending: false,
-                                is_new: true,
-                                offers_count: 1,
-                            });
-
-                        if (error) throw error;
+                        successCount += batch.length;
                     }
-
-                    successCount++;
-                } catch (error) {
-                    console.error(`Error syncing offer ${offer.offerid}:`, error);
-                    errorCount++;
+                } catch (err) {
+                    console.error('Batch sync exception:', err);
+                    errorCount += batch.length;
                 }
             }
 
