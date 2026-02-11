@@ -409,6 +409,23 @@ export function AdminOffer18() {
                                     )}
                                 </Button>
                             </div>
+
+                            <Alert className="mt-4">
+                                <Download className="h-4 w-4" />
+                                <AlertDescription className="flex items-center justify-between">
+                                    <span>Need help setting up real-time tracking?</span>
+                                    <a
+                                        href="/OFFER18_POSTBACK_SETUP.md"
+                                        download="OFFER18_POSTBACK_SETUP.md"
+                                        className="ml-2"
+                                    >
+                                        <Button variant="outline" size="sm">
+                                            <Download className="h-4 w-4 mr-2" />
+                                            Download Postback Guide
+                                        </Button>
+                                    </a>
+                                </AlertDescription>
+                            </Alert>
                         </CardContent>
                     </Card>
                 </TabsContent>
