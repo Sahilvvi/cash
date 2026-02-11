@@ -76,7 +76,16 @@ export function AdminOffer18() {
             const response = await offer18Service.fetchOffers();
 
             if (response.response === '200') {
-                toast.success(`Connection successful! Found ${Object.keys(response.data || {}).length} offers.`);
+                const fetchedOffers = Object.values(response.data || {});
+                setOffers(fetchedOffers);
+                setStats({
+                    total: fetchedOffers.length,
+                    active: fetchedOffers.filter(o => o.status === 'active').length,
+                    authorized: fetchedOffers.filter(o => o.authorized === 'true').length,
+                    synced: 0 // Sync status needs DB check, leaving as 0 for now
+                });
+
+                toast.success(`Connection successful! Loaded ${fetchedOffers.length} offers.`);
                 return true;
             } else {
                 toast.error('Connection test failed');
