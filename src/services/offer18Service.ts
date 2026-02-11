@@ -85,6 +85,7 @@ export interface Offer18Response {
         [offerId: string]: Offer18Offer;
     };
     message?: string;
+    error?: string;
 }
 
 // API Configuration
@@ -183,13 +184,30 @@ class Offer18Service {
                 throw new Error(`API request failed: ${response.status} ${response.statusText}`);
             }
 
-            const data: Offer18Response = await response.json();
+            const text = await response.text();
+            let data: any;
 
-            if (data.response !== '200') {
-                throw new Error(data.message || 'API request failed');
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                // If response is not JSON, it's likely an error message from the API
+                throw new Error(text || 'Invalid API response format');
             }
 
-            return data;
+            // check for "no offers found" error which is actually a valid connection
+            if (data.response === '400' && (data.error?.toLowerCase().includes('no offers found') || data.message?.toLowerCase().includes('no offers found'))) {
+                return {
+                    response: '200',
+                    data: {},
+                    message: 'No offers found',
+                } as Offer18Response;
+            }
+
+            if (data.response !== '200') {
+                throw new Error(data.message || data.error || 'API request failed');
+            }
+
+            return data as Offer18Response;
         } catch (error) {
             console.error('Offer18 API Error:', error);
             throw error;

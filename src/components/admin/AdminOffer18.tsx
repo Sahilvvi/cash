@@ -73,10 +73,10 @@ export function AdminOffer18() {
     const handleTestConnection = async () => {
         try {
             setIsSyncing(true);
-            const response = await offer18Service.fetchOffers({ page: 1 });
+            const response = await offer18Service.fetchOffers();
 
             if (response.response === '200') {
-                toast.success(`Connection successful! Found ${Object.keys(response.data).length} offers.`);
+                toast.success(`Connection successful! Found ${Object.keys(response.data || {}).length} offers.`);
                 return true;
             } else {
                 toast.error('Connection test failed');

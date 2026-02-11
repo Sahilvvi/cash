@@ -10,68 +10,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ===================================================================
--- FUNCTIONS
--- ===================================================================
-
--- Function to generate unique referral codes
-CREATE OR REPLACE FUNCTION generate_referral_code() RETURNS text
-LANGUAGE plpgsql
-SET search_path TO 'public'
-AS $$
-DECLARE
-  chars TEXT := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  result TEXT := 'PW';
-  i INTEGER;
-BEGIN
-  FOR i IN 1..6 LOOP
-    result := result || substr(chars, floor(random() * length(chars) + 1)::INTEGER, 1);
-  END LOOP;
-  RETURN result;
-END;
-$$;
-
--- Function to auto-create user profile on signup
-CREATE OR REPLACE FUNCTION handle_new_user() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER
-SET search_path TO 'public'
-AS $$
-BEGIN
-  INSERT INTO public.profiles (user_id, email, full_name, referral_code)
-  VALUES (
-    NEW.id,
-    NEW.email,
-    COALESCE(NEW.raw_user_meta_data->>'full_name', ''),
-    generate_referral_code()
-  );
-  RETURN NEW;
-END;
-$$;
-
--- Function to check if user is admin
-CREATE OR REPLACE FUNCTION is_admin(_user_id uuid) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER
-SET search_path TO 'public'
-AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.admin_users
-    WHERE user_id = _user_id
-  )
-$$;
-
--- Function to auto-update updated_at timestamp
-CREATE OR REPLACE FUNCTION update_updated_at_column() RETURNS trigger
-LANGUAGE plpgsql
-SET search_path TO 'public'
-AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$;
-
--- ===================================================================
--- TABLES
+-- TABLES (Created FIRST to avoid dependency errors)
 -- ===================================================================
 
 -- Admin Users Table
@@ -292,6 +231,67 @@ CREATE TABLE IF NOT EXISTS public.site_settings (
     description text,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+-- ===================================================================
+-- FUNCTIONS (Created AFTER tables)
+-- ===================================================================
+
+-- Function to generate unique referral codes
+CREATE OR REPLACE FUNCTION generate_referral_code() RETURNS text
+LANGUAGE plpgsql
+SET search_path TO 'public'
+AS $$
+DECLARE
+  chars TEXT := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  result TEXT := 'PW';
+  i INTEGER;
+BEGIN
+  FOR i IN 1..6 LOOP
+    result := result || substr(chars, floor(random() * length(chars) + 1)::INTEGER, 1);
+  END LOOP;
+  RETURN result;
+END;
+$$;
+
+-- Function to auto-create user profile on signup
+CREATE OR REPLACE FUNCTION handle_new_user() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+BEGIN
+  INSERT INTO public.profiles (user_id, email, full_name, referral_code)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'full_name', ''),
+    generate_referral_code()
+  );
+  RETURN NEW;
+END;
+$$;
+
+-- Function to check if user is admin
+CREATE OR REPLACE FUNCTION is_admin(_user_id uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.admin_users
+    WHERE user_id = _user_id
+  )
+$$;
+
+-- Function to auto-update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at_column() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path TO 'public'
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
 
 -- ===================================================================
 -- FOREIGN KEY CONSTRAINTS
