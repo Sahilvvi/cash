@@ -38,6 +38,10 @@ export const useTrackAffiliateClick = () => {
           const affiliateId = apiConfig?.affiliate_id || '';
           finalUrl = `${finalUrl}${separator}affid=${affiliateId}&affExtParam1=${sessionId}`;
 
+        } else if (networkType === 'offer18') {
+          // Offer18 uses 's1' for sub affiliate / session tracking by default
+          finalUrl = `${finalUrl}${separator}s1=${sessionId}`;
+
         } else {
           // Generic postback network - use configurable param name or default to 'subid'
           const paramName = apiConfig?.tracking_param || 'subid';
