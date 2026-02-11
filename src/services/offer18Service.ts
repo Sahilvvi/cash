@@ -174,10 +174,6 @@ class Offer18Service {
 
             const response = await fetch(url, {
                 method: 'GET',
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                },
             });
 
             if (!response.ok) {
