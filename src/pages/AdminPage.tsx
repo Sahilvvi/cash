@@ -671,7 +671,6 @@ const AdminPage = () => {
     { id: "categories", label: "Categories", icon: Grid },
     { id: "stores", label: "Stores", icon: Store },
     { id: "deals", label: "Deals", icon: Tag },
-    { id: "deals", label: "Deals", icon: Tag },
     { id: "tracking", label: "Tracking", icon: BarChart3 },
     { id: "offer18", label: "Offer18 Integration", icon: Network },
     { id: "gift-cards", label: "Gift Cards", icon: Gift },
