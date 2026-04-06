@@ -1,13 +1,12 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useEffect } from "react";
 
 export interface Banner {
   id: string;
   title: string;
   image_url: string;
-  mobile_image_url: string | null;
-  link: string | null;
+  mobile_image_url?: string;
+  link?: string;
   display_order: number;
   is_active: boolean;
 }
@@ -16,36 +15,40 @@ export interface Category {
   id: string;
   name: string;
   slug: string;
-  icon: string;
-  color: string;
+  icon?: string;
   display_order: number;
   is_active: boolean;
 }
 
-export interface SiteSetting {
-  id: string;
-  key: string;
-  value: string | null;
-  description: string | null;
-}
+// Site settings are stored as key-value pairs in the DB
+export type SiteSettings = Record<string, string>;
+
+export const useHomepageData = () => {
+  return useQuery({
+    queryKey: ["homepage_data"],
+    queryFn: async () => {
+      const [bannersRes, settingsRes, categoriesRes] = await Promise.all([
+        supabase.from("banners").select("*").eq("is_active", true).order("display_order"),
+        supabase.from("site_settings").select("key, value"),
+        supabase.from("categories").select("*").eq("is_active", true).order("display_order")
+      ]);
+
+      const settings: SiteSettings = {};
+      (settingsRes.data || []).forEach(s => {
+        if (s.key) settings[s.key] = s.value || "";
+      });
+
+      return {
+        banners: (bannersRes.data || []) as Banner[],
+        settings,
+        categories: (categoriesRes.data || []) as Category[]
+      };
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+};
 
 export const useBanners = () => {
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('banners-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'banners' }, () => {
-        queryClient.invalidateQueries({ queryKey: ["banners"] });
-        queryClient.invalidateQueries({ queryKey: ["admin_banners"] });
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
-
   return useQuery({
     queryKey: ["banners"],
     queryFn: async () => {
@@ -58,26 +61,31 @@ export const useBanners = () => {
       if (error) throw error;
       return data as Banner[];
     },
+    staleTime: 5 * 60 * 1000,
+  });
+};
+
+export const useSiteSettings = () => {
+  return useQuery({
+    queryKey: ["site_settings"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("site_settings")
+        .select("key, value");
+
+      if (error) throw error;
+      
+      const settings: SiteSettings = {};
+      (data || []).forEach(s => {
+        if (s.key) settings[s.key] = s.value || "";
+      });
+      return settings;
+    },
+    staleTime: 5 * 60 * 1000,
   });
 };
 
 export const useCategories = () => {
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('categories-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'categories' }, () => {
-        queryClient.invalidateQueries({ queryKey: ["categories"] });
-        queryClient.invalidateQueries({ queryKey: ["admin_categories"] });
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
-
   return useQuery({
     queryKey: ["categories"],
     queryFn: async () => {
@@ -90,43 +98,6 @@ export const useCategories = () => {
       if (error) throw error;
       return data as Category[];
     },
-  });
-};
-
-export const useSiteSettings = () => {
-  const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const channel = supabase
-      .channel('site-settings-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'site_settings' }, () => {
-        queryClient.invalidateQueries({ queryKey: ["site_settings"] });
-        queryClient.invalidateQueries({ queryKey: ["admin_site_settings"] });
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
-
-  return useQuery({
-    queryKey: ["site_settings"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("site_settings")
-        .select("*");
-
-      if (error) throw error;
-      
-      // Convert to a key-value map for easy access
-      const settings: Record<string, string> = {};
-      (data as SiteSetting[]).forEach((s) => {
-        if (s.key && s.value) {
-          settings[s.key] = s.value;
-        }
-      });
-      return settings;
-    },
+    staleTime: 5 * 60 * 1000,
   });
 };

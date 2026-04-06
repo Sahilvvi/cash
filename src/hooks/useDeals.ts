@@ -1,6 +1,5 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useEffect } from "react";
 
 export interface Deal {
   id: string;
@@ -22,32 +21,6 @@ export interface Deal {
 }
 
 export const useDeals = () => {
-  const queryClient = useQueryClient();
-
-  // Set up realtime subscription
-  useEffect(() => {
-    const channel = supabase
-      .channel('deals-changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'deals'
-        },
-        () => {
-          // Invalidate and refetch deals when any change happens
-          queryClient.invalidateQueries({ queryKey: ["deals"] });
-          queryClient.invalidateQueries({ queryKey: ["admin_deals"] });
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
-
   return useQuery({
     queryKey: ["deals"],
     queryFn: async () => {
@@ -64,6 +37,7 @@ export const useDeals = () => {
       if (error) throw error;
       return data as Deal[];
     },
+    staleTime: 5 * 60 * 1000,
   });
 };
 
@@ -85,5 +59,6 @@ export const useDealsByStore = (storeId: string) => {
       return data as Deal[];
     },
     enabled: !!storeId,
+    staleTime: 5 * 60 * 1000,
   });
 };

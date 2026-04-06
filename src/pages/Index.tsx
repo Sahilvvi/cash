@@ -10,15 +10,18 @@ import StoreCard from "@/components/cards/StoreCard";
 import DealCard from "@/components/cards/DealCard";
 import { useStores } from "@/hooks/useStores";
 import { useDeals } from "@/hooks/useDeals";
-import { useBanners, useSiteSettings } from "@/hooks/useHomepage";
-import { TrendingUp, Flame, Tag, Star } from "lucide-react";
+import { useHomepageData } from "@/hooks/useHomepage";
+import { TrendingUp, Flame, Tag, Star, AlertCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const Index = () => {
-  const { data: stores = [], isLoading: storesLoading } = useStores();
-  const { data: deals = [], isLoading: dealsLoading } = useDeals();
-  const { data: banners = [], isLoading: bannersLoading } = useBanners();
-  const { data: settings = {} } = useSiteSettings();
+  const { data: stores = [], isLoading: storesLoading, error: storesError } = useStores();
+  const { data: deals = [], isLoading: dealsLoading, error: dealsError } = useDeals();
+  const { data: homepageData, isLoading: homepageLoading, error: homepageError } = useHomepageData();
+
+  const settings = homepageData?.settings || {};
+  const banners = homepageData?.banners || [];
 
   const trendingStores = stores.filter(s => s.is_trending).slice(0, 12);
   const popularStores = stores.slice(0, 12);
@@ -47,13 +50,19 @@ const Index = () => {
 
         {/* Hero Carousel */}
         <section className="container mx-auto py-6">
-          {bannersLoading ? (
+          {homepageLoading ? (
             <Skeleton className="w-full h-48 md:h-64 lg:h-80 rounded-xl" />
+          ) : homepageError ? (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>Failed to load homepage data. Please try refreshing.</AlertDescription>
+            </Alert>
           ) : bannerSlides.length > 0 ? (
             <HeroCarousel slides={bannerSlides} />
           ) : (
-            <div className="w-full h-48 md:h-64 lg:h-80 bg-muted rounded-xl flex items-center justify-center">
-              <p className="text-muted-foreground">No banners configured</p>
+            <div className="w-full h-48 md:h-64 lg:h-80 bg-muted rounded-xl flex items-center justify-center border border-dashed">
+              <p className="text-muted-foreground">No active banners found</p>
             </div>
           )}
         </section>
@@ -246,29 +255,29 @@ const Index = () => {
         {/* Trust Indicators */}
         <section className="container mx-auto py-12">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-            <div className="p-4">
+            <div className="p-4 bg-card rounded-xl border border-border shadow-sm">
               <p className="text-3xl md:text-4xl font-bold font-heading text-primary mb-1">
                 {settings.partner_stores_count || "300+"}
               </p>
-              <p className="text-muted-foreground text-sm">Partner Stores</p>
+              <p className="text-muted-foreground text-sm font-medium">Partner Stores</p>
             </div>
-            <div className="p-4">
+            <div className="p-4 bg-card rounded-xl border border-border shadow-sm">
               <p className="text-3xl md:text-4xl font-bold font-heading text-primary mb-1">
                 {settings.cashback_paid || "₹50Cr+"}
               </p>
-              <p className="text-muted-foreground text-sm">Cashback Paid</p>
+              <p className="text-muted-foreground text-sm font-medium">Cashback Paid</p>
             </div>
-            <div className="p-4">
+            <div className="p-4 bg-card rounded-xl border border-border shadow-sm">
               <p className="text-3xl md:text-4xl font-bold font-heading text-primary mb-1">
                 {settings.happy_users || "10L+"}
               </p>
-              <p className="text-muted-foreground text-sm">Happy Users</p>
+              <p className="text-muted-foreground text-sm font-medium">Happy Users</p>
             </div>
-            <div className="p-4">
+            <div className="p-4 bg-card rounded-xl border border-border shadow-sm">
               <p className="text-3xl md:text-4xl font-bold font-heading text-primary mb-1">
                 {settings.user_rating || "4.8★"}
               </p>
-              <p className="text-muted-foreground text-sm">User Rating</p>
+              <p className="text-muted-foreground text-sm font-medium">User Rating</p>
             </div>
           </div>
         </section>
