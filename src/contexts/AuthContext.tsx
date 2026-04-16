@@ -19,6 +19,7 @@ interface AuthContextType {
   profile: Profile | null;
   isLoading: boolean;
   isAdmin: boolean;
+  isAdminChecking: boolean;
   signUp: (email: string, password: string, fullName?: string, referralCode?: string) => Promise<{ error: Error | null }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
@@ -33,6 +34,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdminChecking, setIsAdminChecking] = useState(false);
 
   const fetchProfile = async (userId: string) => {
     const { data, error } = await supabase
@@ -47,19 +49,23 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const checkAdmin = async (userId: string) => {
-    const { data, error } = await supabase
-      .from("admin_users")
-      .select("id")
-      .eq("user_id", userId)
-      .maybeSingle();
+    try {
+      const { data, error } = await supabase
+        .from("admin_users")
+        .select("id")
+        .eq("user_id", userId)
+        .maybeSingle();
 
-    if (error) {
-      console.error("Error checking admin status:", error);
-      setIsAdmin(false);
-      return;
+      if (error) {
+        console.error("Error checking admin status:", error);
+        setIsAdmin(false);
+        return;
+      }
+
+      setIsAdmin(!!data);
+    } finally {
+      setIsAdminChecking(false);
     }
-
-    setIsAdmin(!!data);
   };
 
   useEffect(() => {
@@ -70,7 +76,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(session?.user ?? null);
 
         if (session?.user) {
-          // Defer Supabase calls to avoid deadlock
+          // Mark admin check as in-flight SYNCHRONOUSLY so guards (e.g. AdminPage)
+          // don't see a transient `user && !isAdmin` state and bounce the user
+          // back to /admin/login before checkAdmin resolves.
+          setIsAdminChecking(true);
+          // Defer Supabase calls to avoid deadlock inside the auth listener.
           setTimeout(() => {
             fetchProfile(session.user.id);
             checkAdmin(session.user.id);
@@ -78,6 +88,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         } else {
           setProfile(null);
           setIsAdmin(false);
+          setIsAdminChecking(false);
         }
       }
     );
@@ -88,6 +99,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser(session?.user ?? null);
 
       if (session?.user) {
+        setIsAdminChecking(true);
         await Promise.all([
           fetchProfile(session.user.id),
           checkAdmin(session.user.id)
@@ -137,6 +149,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setSession(null);
     setProfile(null);
     setIsAdmin(false);
+    setIsAdminChecking(false);
   };
 
   const updateProfile = async (data: Partial<Profile>) => {
@@ -162,6 +175,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         profile,
         isLoading,
         isAdmin,
+        isAdminChecking,
         signUp,
         signIn,
         signOut,

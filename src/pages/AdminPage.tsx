@@ -51,7 +51,7 @@ import CategoryDetailView from "@/components/admin/CategoryDetailView";
 
 const AdminPage = () => {
   const navigate = useNavigate();
-  const { user, isAdmin, isLoading, signOut } = useAuth();
+  const { user, isAdmin, isLoading, isAdminChecking, signOut } = useAuth();
   const queryClient = useQueryClient();
 
   const [activeSection, setActiveSection] = useState("dashboard");
@@ -648,14 +648,17 @@ const AdminPage = () => {
 
   const CHART_COLORS = ['hsl(var(--primary))', 'hsl(var(--success))', 'hsl(var(--warning))', 'hsl(var(--destructive))'];
 
-  // Redirect if not admin
+  // Redirect if not admin. IMPORTANT: wait for `isAdminChecking` to finish
+  // before deciding — otherwise we bounce the user back to /admin/login
+  // during the brief window between auth state change and the admin DB
+  // check resolving.
   useEffect(() => {
-    if (!isLoading && (!user || !isAdmin)) {
+    if (!isLoading && !isAdminChecking && (!user || !isAdmin)) {
       navigate("/admin/login");
     }
-  }, [isLoading, user, isAdmin, navigate]);
+  }, [isLoading, isAdminChecking, user, isAdmin, navigate]);
 
-  if (isLoading || !user || !isAdmin) {
+  if (isLoading || isAdminChecking || !user || !isAdmin) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>

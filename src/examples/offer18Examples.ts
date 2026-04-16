@@ -9,23 +9,18 @@ import { offer18Service, type Offer18Offer } from '@/services/offer18Service';
 import { supabase } from '@/integrations/supabase/client';
 
 // =============================================================================
-// EXAMPLE 1: Initialize the Service
+// EXAMPLE 1: Check Server Configuration
 // =============================================================================
+//
+// API credentials live as Supabase function secrets on the server
+// (OFFER18_API_KEY / OFFER18_AFFILIATE_ID / OFFER18_MERCHANT_ID) and are NOT
+// configured from the client anymore. The client just asks the server whether
+// the secrets are set.
 
 export async function initializeOffer18() {
-    // Option A: Load from environment variables
-    offer18Service.initialize({
-        apiKey: import.meta.env.VITE_OFFER18_API_KEY,
-        affiliateId: import.meta.env.VITE_OFFER18_AFFILIATE_ID,
-        merchantId: import.meta.env.VITE_OFFER18_MERCHANT_ID,
-    });
-
-    // Option B: Load from runtime config
-    offer18Service.initialize({
-        apiKey: 'your_api_key',
-        affiliateId: 'your_affiliate_id',
-        merchantId: 'your_merchant_id',
-    });
+    const status = await offer18Service.getStatus();
+    console.log('Offer18 server status:', status);
+    return status;
 }
 
 // =============================================================================
