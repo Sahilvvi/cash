@@ -1,9 +1,16 @@
 /**
  * Offer18 API Integration Service
- * 
- * Documentation: https://knowledgebase.offer18.com/affiliate/affiliate-apis/offers-api
- * Base URL: https://api.offer18.com/api/af/offers
+ *
+ * All Offer18 calls are proxied through the `offer18-proxy` Supabase Edge
+ * Function. The Offer18 API key lives ONLY in function secrets on the
+ * server and is never exposed to the browser.
+ *
+ * Edge function path: `${SUPABASE_URL}/functions/v1/offer18-proxy`
+ *
+ * Upstream docs: https://knowledgebase.offer18.com/affiliate/affiliate-apis/offers-api
  */
+
+import { supabase } from "@/integrations/supabase/client";
 
 // Offer18 API Response Types
 export interface Offer18Event {
@@ -88,11 +95,13 @@ export interface Offer18Response {
     error?: string;
 }
 
-// API Configuration
-export interface Offer18Config {
-    apiKey: string;
-    affiliateId: string;
-    merchantId: string;
+// Reported by the proxy's `?action=status` endpoint. Tells the admin UI
+// whether the server has the Offer18 secrets set, without requiring any
+// secret material on the client.
+export interface Offer18Status {
+    configured: boolean;
+    affiliate_id: string | null;
+    merchant_id: string | null;
 }
 
 // Query Parameters
@@ -107,214 +116,164 @@ export interface Offer18QueryParams {
     offer_access?: 1; // 1 = Auto-approve public offers
 }
 
+const PROXY_FUNCTION = 'offer18-proxy';
+
 /**
- * Offer18 API Service
+ * Offer18 API Service (proxied via Supabase Edge Function).
  */
 class Offer18Service {
-    private baseUrl = 'https://api.offer18.com/api/af/offers';
-    private config: Offer18Config | null = null;
+    private lastStatus: Offer18Status | null = null;
 
     /**
-     * Initialize the service with API credentials
+     * Ask the server whether Offer18 secrets are configured. Does NOT hit
+     * the Offer18 API itself.
      */
-    initialize(config: Offer18Config) {
-        this.config = config;
+    async getStatus(): Promise<Offer18Status> {
+        const statusUrl = this.buildFunctionUrl({ action: 'status' });
+        const session = (await supabase.auth.getSession()).data.session;
+        const token = session?.access_token;
+        const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+
+        const resp = await fetch(statusUrl, {
+            method: 'GET',
+            headers: {
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                apikey: anonKey,
+            },
+        });
+        if (!resp.ok) {
+            throw new Error(`Status check failed: ${resp.status} ${resp.statusText}`);
+        }
+        const statusJson = (await resp.json()) as Offer18Status;
+        this.lastStatus = statusJson;
+        return statusJson;
     }
 
     /**
-     * Check if service is configured
+     * True iff the last status check said the server is configured.
      */
     isConfigured(): boolean {
-        return !!(this.config?.apiKey && this.config?.affiliateId && this.config?.merchantId);
+        return !!this.lastStatus?.configured;
+    }
+
+    getLastStatus(): Offer18Status | null {
+        return this.lastStatus;
     }
 
     /**
-     * Get configuration
+     * Build the absolute URL for the edge function.
      */
-    getConfig(): Offer18Config | null {
-        return this.config;
-    }
-
-    /**
-     * Build API URL with query parameters
-     */
-    private buildUrl(params?: Offer18QueryParams): string {
-        if (!this.config) {
-            throw new Error('Offer18 service not configured. Please call initialize() first.');
+    private buildFunctionUrl(params: Record<string, string | number | undefined>): string {
+        const base = import.meta.env.VITE_SUPABASE_URL as string;
+        const url = new URL(`${base}/functions/v1/${PROXY_FUNCTION}`);
+        for (const [key, value] of Object.entries(params)) {
+            if (value !== undefined && value !== null && value !== '') {
+                url.searchParams.set(key, String(value));
+            }
         }
-
-        const url = new URL(this.baseUrl);
-
-        // Required parameters
-        url.searchParams.append('key', this.config.apiKey);
-        url.searchParams.append('aid', this.config.affiliateId);
-        url.searchParams.append('mid', this.config.merchantId);
-
-        // Optional parameters
-        if (params) {
-            if (params.offer_id) url.searchParams.append('offer_id', params.offer_id);
-            if (params.page) url.searchParams.append('page', params.page.toString());
-            if (params.category) url.searchParams.append('category', params.category);
-            if (params.model) url.searchParams.append('model', params.model);
-            if (params.country) url.searchParams.append('country', params.country);
-            if (params.offer_status) url.searchParams.append('offer_status', params.offer_status.toString());
-            if (params.authorized) url.searchParams.append('authorized', params.authorized.toString());
-            if (params.offer_access) url.searchParams.append('offer_access', params.offer_access.toString());
-        }
-
         return url.toString();
     }
 
     /**
-     * Fetch offers from Offer18 API
+     * Low-level fetch against the proxy.
      */
     async fetchOffers(params?: Offer18QueryParams): Promise<Offer18Response> {
-        try {
-            const url = this.buildUrl(params);
-
-            const response = await fetch(url, {
-                method: 'GET',
-            });
-
-            if (!response.ok) {
-                throw new Error(`API request failed: ${response.status} ${response.statusText}`);
-            }
-
-            const text = await response.text();
-            let data: any;
-
-            try {
-                data = JSON.parse(text);
-            } catch (e) {
-                // If response is not JSON, it's likely an error message from the API
-                throw new Error(text || 'Invalid API response format');
-            }
-
-            // check for "no offers found" error which is actually a valid connection
-            if (data.response === '400' && (data.error?.toLowerCase().includes('no offers found') || data.message?.toLowerCase().includes('no offers found'))) {
-                return {
-                    response: '200',
-                    data: {},
-                    message: 'No offers found',
-                } as Offer18Response;
-            }
-
-            if (data.response !== '200') {
-                throw new Error(data.message || data.error || 'API request failed');
-            }
-
-            return data as Offer18Response;
-        } catch (error) {
-            console.error('Offer18 API Error:', error);
-            throw error;
+        const query: Record<string, string | number | undefined> = {};
+        if (params) {
+            if (params.offer_id) query.offer_id = params.offer_id;
+            if (params.page) query.page = params.page;
+            if (params.category) query.category = params.category;
+            if (params.model) query.model = params.model;
+            if (params.country) query.country = params.country;
+            if (params.offer_status) query.offer_status = params.offer_status;
+            if (params.authorized) query.authorized = params.authorized;
+            if (params.offer_access) query.offer_access = params.offer_access;
         }
+
+        const session = (await supabase.auth.getSession()).data.session;
+        const token = session?.access_token;
+        if (!token) {
+            throw new Error('You must be signed in as an admin to call Offer18.');
+        }
+        const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+
+        const url = this.buildFunctionUrl(query);
+        const resp = await fetch(url, {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                apikey: anonKey,
+            },
+        });
+
+        const text = await resp.text();
+        let data: any;
+        try {
+            data = JSON.parse(text);
+        } catch {
+            throw new Error(text || 'Invalid proxy response');
+        }
+
+        if (!resp.ok) {
+            const msg = data?.error || data?.message || `Proxy error ${resp.status}`;
+            throw new Error(msg);
+        }
+
+        if (data.response !== '200') {
+            throw new Error(data.message || data.error || 'Offer18 API request failed');
+        }
+
+        return data as Offer18Response;
     }
 
-    /**
-     * Fetch all active offers
-     */
     async fetchActiveOffers(params?: Omit<Offer18QueryParams, 'offer_status'>): Promise<Offer18Offer[]> {
-        const response = await this.fetchOffers({
-            ...params,
-            offer_status: 1, // Active offers only
-        });
-
+        const response = await this.fetchOffers({ ...params, offer_status: 1 });
         return Object.values(response.data);
     }
 
-    /**
-     * Fetch authorized/assigned offers
-     */
     async fetchAuthorizedOffers(params?: Omit<Offer18QueryParams, 'authorized'>): Promise<Offer18Offer[]> {
-        const response = await this.fetchOffers({
-            ...params,
-            authorized: 1, // Assigned offers only
-        });
-
+        const response = await this.fetchOffers({ ...params, authorized: 1 });
         return Object.values(response.data);
     }
 
-    /**
-     * Fetch offers by category
-     */
     async fetchOffersByCategory(category: string, params?: Offer18QueryParams): Promise<Offer18Offer[]> {
-        const response = await this.fetchOffers({
-            ...params,
-            category,
-        });
-
+        const response = await this.fetchOffers({ ...params, category });
         return Object.values(response.data);
     }
 
-    /**
-     * Fetch offers by model (CPA, CPC, etc.)
-     */
-    async fetchOffersByModel(model: 'CPA' | 'CPC' | 'CPL' | 'CPS' | 'CPM', params?: Offer18QueryParams): Promise<Offer18Offer[]> {
-        const response = await this.fetchOffers({
-            ...params,
-            model,
-        });
-
+    async fetchOffersByModel(
+        model: 'CPA' | 'CPC' | 'CPL' | 'CPS' | 'CPM',
+        params?: Offer18QueryParams,
+    ): Promise<Offer18Offer[]> {
+        const response = await this.fetchOffers({ ...params, model });
         return Object.values(response.data);
     }
 
-    /**
-     * Fetch offers by country
-     */
     async fetchOffersByCountry(country: string, params?: Offer18QueryParams): Promise<Offer18Offer[]> {
-        const response = await this.fetchOffers({
-            ...params,
-            country,
-        });
-
+        const response = await this.fetchOffers({ ...params, country });
         return Object.values(response.data);
     }
 
-    /**
-     * Fetch a specific offer by ID
-     */
     async fetchOfferById(offerId: string): Promise<Offer18Offer | null> {
-        const response = await this.fetchOffers({
-            offer_id: offerId,
-        });
-
+        const response = await this.fetchOffers({ offer_id: offerId });
         return response.data[offerId] || null;
     }
 
-    /**
-     * Fetch offers with pagination
-     */
-    async fetchOffersPaginated(page: number = 1, params?: Offer18QueryParams): Promise<{
-        offers: Offer18Offer[];
-        page: number;
-    }> {
-        const response = await this.fetchOffers({
-            ...params,
-            page,
-        });
-
-        return {
-            offers: Object.values(response.data),
-            page,
-        };
+    async fetchOffersPaginated(
+        page: number = 1,
+        params?: Offer18QueryParams,
+    ): Promise<{ offers: Offer18Offer[]; page: number }> {
+        const response = await this.fetchOffers({ ...params, page });
+        return { offers: Object.values(response.data), page };
     }
 
-    /**
-     * Convert Offer18 offer to Store format for database
-     */
     /**
      * Convert Offer18 offer to Store format for database
      */
     convertToStore(offer: Offer18Offer) {
-        // Extract the best payout
         const bestPayout = offer.payout && offer.payout.length > 0 ? offer.payout[0] : null;
-        // Parse payout, handle if it's a percentage or fixed amount based on model
         let cashbackPercent = 0;
-        let cashbackType = 'percent'; // default
-
-        // Logic to determine cashback type and value
-        // Offer18 models: CPA, CPC, CPL, CPS, CPM
-        // CPS usually implies percentage, others are usually fixed amounts (flat)
+        let cashbackType = 'percent';
 
         if (bestPayout) {
             const payoutValue = parseFloat(bestPayout.payout);
@@ -325,27 +284,23 @@ class Offer18Service {
             if (offer.model === 'CPS') {
                 cashbackType = 'percent';
             } else {
-                cashbackType = 'flat'; // CPA, CPC, CPL etc are typically flat rates
+                cashbackType = 'flat';
             }
         }
 
-        // Generate slug from name
-        // Ensure unique slug logic is handled by DB or caller if duplicates exist
         const slug = offer.name
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-|-$/g, '');
 
-        // Map to Supabase 'stores' table structure
         return {
             name: offer.name,
-            slug: slug, // This might need uniqueness check in real app
+            slug,
             description: offer.offer_terms || offer.offer_kpi || `${offer.name} - ${offer.model} offer`,
             logo_url: offer.logo,
             cashback_percent: cashbackPercent,
             cashback_type: cashbackType,
             category: offer.category ? offer.category.split(',')[0].trim() : 'General',
-            // critical: affiliate_url is the tracking link
             affiliate_url: offer.click_url,
             network_type: 'offer18',
             api_config: {
@@ -366,57 +321,49 @@ class Offer18Service {
     }
 
     /**
-     * Get tracking URL for an offer
+     * Get tracking URL for an offer.
      */
     getTrackingUrl(offer: Offer18Offer, subId?: string): string {
         let url = offer.click_url;
-
-        // Add sub ID if provided
         if (subId) {
             const separator = url.includes('?') ? '&' : '?';
             url += `${separator}s1=${subId}`;
         }
-
         return url;
     }
 
     /**
-     * Check if offer is available in a specific country
+     * Check if offer is available in a specific country.
      */
     isOfferAvailableInCountry(offer: Offer18Offer, countryCode: string): boolean {
-        // Check if country is blocked
         if (offer.country_block) {
-            const blocked = offer.country_block.split(',').map(c => c.trim());
-            if (blocked.includes(countryCode)) {
-                return false;
-            }
+            const blocked = offer.country_block.split(',').map((c) => c.trim());
+            if (blocked.includes(countryCode)) return false;
         }
-
-        // Check if country is allowed (if allow list exists)
         if (offer.country_allow) {
-            const allowed = offer.country_allow.split(',').map(c => c.trim());
+            const allowed = offer.country_allow.split(',').map((c) => c.trim());
             return allowed.includes(countryCode);
         }
-
-        // If no allow list, and not blocked, it's available
         return true;
     }
 
     /**
-     * Get offer payout for specific conditions
+     * Get offer payout for specific conditions.
      */
-    getOfferPayout(offer: Offer18Offer, conditions?: {
-        event?: string;
-        country?: string;
-        device_type?: string;
-        browser?: string;
-        os?: string;
-    }): Offer18Payout | null {
+    getOfferPayout(
+        offer: Offer18Offer,
+        conditions?: {
+            event?: string;
+            country?: string;
+            device_type?: string;
+            browser?: string;
+            os?: string;
+        },
+    ): Offer18Payout | null {
         if (!conditions || offer.payout.length === 0) {
             return offer.payout[0] || null;
         }
 
-        // Find matching payout based on conditions
         for (const payout of offer.payout) {
             let matches = true;
 
@@ -438,19 +385,14 @@ class Offer18Service {
                         }
                     }
                 }
-
                 if (!matches) break;
             }
 
-            if (matches) {
-                return payout;
-            }
+            if (matches) return payout;
         }
 
-        // Return default payout if no match
         return offer.payout[0] || null;
     }
 }
 
-// Export singleton instance
 export const offer18Service = new Offer18Service();

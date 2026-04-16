@@ -1,36 +1,50 @@
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useState } from "react";
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
     Network,
-    Settings,
     RefreshCw,
     CheckCircle2,
     AlertCircle,
     Package,
     TrendingUp,
-    Globe,
-    DollarSign,
     Download,
-    ExternalLink
+    ExternalLink,
+    Activity,
+    ShieldCheck,
 } from "lucide-react";
-import { offer18Service, type Offer18Offer, type Offer18Config } from "@/services/offer18Service";
+import {
+    offer18Service,
+    type Offer18Offer,
+    type Offer18Status,
+} from "@/services/offer18Service";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+interface PostbackRow {
+    id: string;
+    order_id: string | null;
+    amount: number | null;
+    status: string | null;
+    description: string | null;
+    created_at: string | null;
+    store_id: string | null;
+}
+
 export function AdminOffer18() {
-    const [config, setConfig] = useState<Offer18Config>({
-        apiKey: '',
-        affiliateId: '',
-        merchantId: '',
-    });
-    const [isConfigured, setIsConfigured] = useState(false);
+    const [status, setStatus] = useState<Offer18Status | null>(null);
+    const [statusChecking, setStatusChecking] = useState(true);
+    const [statusError, setStatusError] = useState<string | null>(null);
     const [isSyncing, setIsSyncing] = useState(false);
     const [offers, setOffers] = useState<Offer18Offer[]>([]);
     const [stats, setStats] = useState({
@@ -39,35 +53,52 @@ export function AdminOffer18() {
         authorized: 0,
         synced: 0,
     });
+    const [postbacks, setPostbacks] = useState<PostbackRow[]>([]);
+    const [postbacksLoading, setPostbacksLoading] = useState(false);
 
-    // Load configuration from environment or database
+    const isConfigured = !!status?.configured;
+
     useEffect(() => {
-        loadConfiguration();
+        refreshStatus();
+        refreshPostbacks();
     }, []);
 
-    const loadConfiguration = () => {
-        // Try to load from environment first
-        const apiKey = import.meta.env.VITE_OFFER18_API_KEY;
-        const affiliateId = import.meta.env.VITE_OFFER18_AFFILIATE_ID;
-        const merchantId = import.meta.env.VITE_OFFER18_MERCHANT_ID;
-
-        if (apiKey && affiliateId && merchantId) {
-            const loadedConfig = { apiKey, affiliateId, merchantId };
-            setConfig(loadedConfig);
-            offer18Service.initialize(loadedConfig);
-            setIsConfigured(true);
+    const refreshStatus = async () => {
+        setStatusChecking(true);
+        setStatusError(null);
+        try {
+            const s = await offer18Service.getStatus();
+            setStatus(s);
+        } catch (err) {
+            setStatus({ configured: false, affiliate_id: null, merchant_id: null });
+            setStatusError((err as Error).message);
+        } finally {
+            setStatusChecking(false);
         }
     };
 
-    const handleConfigSave = () => {
-        if (!config.apiKey || !config.affiliateId || !config.merchantId) {
-            toast.error('Please fill in all configuration fields');
-            return;
-        }
+    const refreshPostbacks = async () => {
+        setPostbacksLoading(true);
+        try {
+            // Conversions produced by the `track-conversion` edge function.
+            // We filter down to the most recent ones; the tracking table
+            // currently doesn't store the network name, so we also surface
+            // rows whose description references an order (the shape the
+            // edge function writes).
+            const { data, error } = await supabase
+                .from("cashback_transactions")
+                .select("id, order_id, amount, status, description, created_at, store_id")
+                .order("created_at", { ascending: false })
+                .limit(25);
 
-        offer18Service.initialize(config);
-        setIsConfigured(true);
-        toast.success('Offer18 configuration saved successfully');
+            if (error) throw error;
+            setPostbacks((data ?? []) as PostbackRow[]);
+        } catch (err) {
+            console.error("Failed to load recent postbacks:", err);
+            toast.error("Failed to load recent postbacks: " + (err as Error).message);
+        } finally {
+            setPostbacksLoading(false);
+        }
     };
 
     const handleTestConnection = async () => {
@@ -75,26 +106,24 @@ export function AdminOffer18() {
             setIsSyncing(true);
             const response = await offer18Service.fetchOffers();
 
-            if (response.response === '200') {
-                const fetchedOffers = Object.values(response.data || {});
-                setOffers(fetchedOffers);
+            if (response.response === "200") {
+                const fetched = Object.values(response.data || {});
+                setOffers(fetched);
                 setStats({
-                    total: fetchedOffers.length,
-                    active: fetchedOffers.filter(o => o.status === 'active').length,
-                    authorized: fetchedOffers.filter(o => o.authorized === 'true').length,
-                    synced: 0 // Sync status needs DB check, leaving as 0 for now
+                    total: fetched.length,
+                    active: fetched.filter((o) => o.status === "active").length,
+                    authorized: fetched.filter((o) => o.authorized === "true").length,
+                    synced: 0,
                 });
-
-                toast.success(`Connection successful! Loaded ${fetchedOffers.length} offers.`);
-                return true;
+                toast.success(
+                    `Connection successful! Loaded ${fetched.length} offers.`,
+                );
             } else {
-                toast.error('Connection test failed');
-                return false;
+                toast.error("Connection test failed");
             }
-        } catch (error) {
-            console.error('Connection test error:', error);
-            toast.error('Connection test failed: ' + (error as Error).message);
-            return false;
+        } catch (err) {
+            console.error("Connection test error:", err);
+            toast.error("Connection test failed: " + (err as Error).message);
         } finally {
             setIsSyncing(false);
         }
@@ -103,137 +132,102 @@ export function AdminOffer18() {
     const handleFetchOffers = async (filters?: {
         activeOnly?: boolean;
         authorizedOnly?: boolean;
-        model?: string;
-        country?: string;
     }) => {
         try {
             setIsSyncing(true);
-
-            let fetchedOffers: Offer18Offer[] = [];
+            let fetched: Offer18Offer[] = [];
 
             if (filters?.authorizedOnly) {
-                fetchedOffers = await offer18Service.fetchAuthorizedOffers();
+                fetched = await offer18Service.fetchAuthorizedOffers();
             } else if (filters?.activeOnly) {
-                fetchedOffers = await offer18Service.fetchActiveOffers();
+                fetched = await offer18Service.fetchActiveOffers();
             } else {
                 const response = await offer18Service.fetchOffers();
-                fetchedOffers = Object.values(response.data || {});
+                fetched = Object.values(response.data || {});
             }
 
-            setOffers(fetchedOffers);
-
-            // Update stats
+            setOffers(fetched);
             setStats({
-                total: fetchedOffers.length,
-                active: fetchedOffers.filter(o => o.status === 'active').length,
-                authorized: fetchedOffers.filter(o => o.authorized === 'true').length,
+                total: fetched.length,
+                active: fetched.filter((o) => o.status === "active").length,
+                authorized: fetched.filter((o) => o.authorized === "true").length,
                 synced: 0,
             });
 
-            if (fetchedOffers.length > 0) {
-                toast.success(`Fetched ${fetchedOffers.length} offers from Offer18`);
+            if (fetched.length > 0) {
+                toast.success(`Fetched ${fetched.length} offers from Offer18`);
             } else {
-                toast.info('No offers found matching criteria');
+                toast.info("No offers found matching criteria");
             }
 
-            return fetchedOffers;
-        } catch (error) {
-            console.error('Fetch offers error:', error);
-            toast.error('Failed to fetch offers: ' + (error as Error).message);
+            return fetched;
+        } catch (err) {
+            console.error("Fetch offers error:", err);
+            toast.error("Failed to fetch offers: " + (err as Error).message);
             return [];
         } finally {
             setIsSyncing(false);
         }
     };
 
-    const handleSyncToDatabase = async (selectedOffers: Offer18Offer[]) => {
+    const handleSyncToDatabase = async (selected: Offer18Offer[]) => {
         try {
             setIsSyncing(true);
-            const offersToSync = selectedOffers;
-
-            if (!offersToSync || offersToSync.length === 0) {
-                toast.error('No offers to sync');
+            if (!selected?.length) {
+                toast.error("No offers to sync");
                 return;
             }
 
-            // Prepare all data first
-            const storeDataList = offersToSync.map(offer => {
-                const storeData = offer18Service.convertToStore(offer);
-                return {
-                    ...storeData,
-                    updated_at: new Date().toISOString(),
-                    // Default fields that are required by the schema but might default if omitted
-                    // However upsert requires full row or partial row. 
-                    // Since schema defines defaults for these, we can omit them if we want to rely on DB defaults for NEW rows,
-                    // but for UPDATES we might overwrite them.
-                    // Let's explicitly set key fields
-                    is_active: true,
-                    // offer18 specific
-                    offer18_offer_id: offer.offerid,
-                    network_type: 'offer18',
-                    offers_count: 1
-                };
-            });
+            const rows = selected.map((offer) => ({
+                ...offer18Service.convertToStore(offer),
+                updated_at: new Date().toISOString(),
+                is_active: true,
+                offer18_offer_id: offer.offerid,
+                network_type: "offer18",
+                offers_count: 1,
+            }));
 
-            // Process in batches of 50 to avoid payload limits
-            const BATCH_SIZE = 50;
-            let successCount = 0;
-            let errorCount = 0;
+            const BATCH = 50;
+            let success = 0;
+            let failures = 0;
 
-            for (let i = 0; i < storeDataList.length; i += BATCH_SIZE) {
-                const batch = storeDataList.slice(i, i + BATCH_SIZE);
-
-                try {
-                    // Use upsert to insert or update based on 'slug' (which is UNIQUE in DB)
-                    const { error } = await supabase
-                        .from('stores')
-                        .upsert(batch, {
-                            onConflict: 'slug',
-                            ignoreDuplicates: false
-                        });
-
-                    if (error) {
-                        console.error('Batch sync error:', error);
-                        errorCount += batch.length;
-                        toast.error(`Batch failed: ${error.message}`);
-                    } else {
-                        successCount += batch.length;
-                    }
-                } catch (err) {
-                    console.error('Batch sync exception:', err);
-                    errorCount += batch.length;
+            for (let i = 0; i < rows.length; i += BATCH) {
+                const batch = rows.slice(i, i + BATCH);
+                const { error } = await supabase
+                    .from("stores")
+                    .upsert(batch, { onConflict: "slug", ignoreDuplicates: false });
+                if (error) {
+                    console.error("Batch sync error:", error);
+                    failures += batch.length;
+                    toast.error(`Batch failed: ${error.message}`);
+                } else {
+                    success += batch.length;
                 }
             }
 
-            setStats(prev => ({ ...prev, synced: successCount }));
-
-            if (successCount > 0) {
-                toast.success(`Successfully synced ${successCount} offers to database`);
+            setStats((prev) => ({ ...prev, synced: success }));
+            if (success > 0) {
+                toast.success(`Successfully synced ${success} offers to database`);
             }
-
-            if (errorCount > 0) {
-                toast.error(`Failed to sync ${errorCount} offers`);
+            if (failures > 0) {
+                toast.error(`Failed to sync ${failures} offers`);
             }
-        } catch (error) {
-            console.error('Sync error:', error);
-            toast.error('Failed to sync offers to database');
+        } catch (err) {
+            console.error("Sync error:", err);
+            toast.error("Failed to sync offers to database");
         } finally {
             setIsSyncing(false);
         }
     };
 
     const handleSyncActiveOffers = async () => {
-        const fetchedOffers = await handleFetchOffers({ activeOnly: true });
-        if (fetchedOffers && fetchedOffers.length > 0) {
-            await handleSyncToDatabase(fetchedOffers);
-        }
+        const fetched = await handleFetchOffers({ activeOnly: true });
+        if (fetched?.length) await handleSyncToDatabase(fetched);
     };
 
     const handleSyncAuthorizedOffers = async () => {
-        const fetchedOffers = await handleFetchOffers({ authorizedOnly: true });
-        if (fetchedOffers && fetchedOffers.length > 0) {
-            await handleSyncToDatabase(fetchedOffers);
-        }
+        const fetched = await handleFetchOffers({ authorizedOnly: true });
+        if (fetched?.length) await handleSyncToDatabase(fetched);
     };
 
     return (
@@ -246,18 +240,124 @@ export function AdminOffer18() {
                         Offer18 Integration
                     </h2>
                     <p className="text-muted-foreground mt-1">
-                        Manage Offer18 API integration and sync offers
+                        Calls are proxied through a Supabase Edge Function; the Offer18
+                        API key lives only on the server.
                     </p>
                 </div>
-                {isConfigured && (
+                {statusChecking ? (
+                    <Badge variant="outline" className="gap-1">
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                        Checking…
+                    </Badge>
+                ) : isConfigured ? (
                     <Badge variant="default" className="gap-1">
                         <CheckCircle2 className="h-3 w-3" />
                         Connected
                     </Badge>
+                ) : (
+                    <Badge variant="destructive" className="gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        Not Configured
+                    </Badge>
                 )}
             </div>
 
-            {/* Stats Cards */}
+            {/* Config status card (no secret material here) */}
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                        <ShieldCheck className="h-5 w-5 text-primary" />
+                        Server Configuration
+                    </CardTitle>
+                    <CardDescription>
+                        Offer18 credentials are stored as Supabase function secrets, not in
+                        the frontend bundle. Set them with:{" "}
+                        <code className="text-xs">
+                            supabase secrets set OFFER18_API_KEY=… OFFER18_AFFILIATE_ID=…
+                            OFFER18_MERCHANT_ID=…
+                        </code>
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="rounded-md border p-3">
+                            <div className="text-xs text-muted-foreground">API Key</div>
+                            <div className="font-mono text-sm">
+                                {isConfigured ? "••••••••••••" : "not set"}
+                            </div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                            <div className="text-xs text-muted-foreground">Affiliate ID</div>
+                            <div className="font-mono text-sm">
+                                {status?.affiliate_id ?? "not set"}
+                            </div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                            <div className="text-xs text-muted-foreground">Merchant ID</div>
+                            <div className="font-mono text-sm">
+                                {status?.merchant_id ?? "not set"}
+                            </div>
+                        </div>
+                    </div>
+
+                    {statusError && (
+                        <Alert variant="destructive">
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertDescription>{statusError}</AlertDescription>
+                        </Alert>
+                    )}
+
+                    {!isConfigured && !statusChecking && (
+                        <Alert variant="destructive">
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertDescription>
+                                The <code>offer18-proxy</code> function is missing one or more
+                                secrets. Once you've run{" "}
+                                <code>supabase secrets set …</code> and redeployed, click
+                                "Refresh Status".
+                            </AlertDescription>
+                        </Alert>
+                    )}
+
+                    <div className="flex gap-2">
+                        <Button variant="outline" onClick={refreshStatus} disabled={statusChecking}>
+                            <RefreshCw
+                                className={`h-4 w-4 mr-2 ${statusChecking ? "animate-spin" : ""}`}
+                            />
+                            Refresh Status
+                        </Button>
+                        <Button
+                            onClick={handleTestConnection}
+                            disabled={!isConfigured || isSyncing}
+                        >
+                            {isSyncing ? (
+                                <>
+                                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                                    Testing…
+                                </>
+                            ) : (
+                                <>
+                                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                                    Test Connection
+                                </>
+                            )}
+                        </Button>
+                        <a
+                            href="https://knowledgebase.offer18.com/affiliate/affiliate-apis/offers-api"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex"
+                        >
+                            <Button variant="ghost">
+                                Docs
+                                <ExternalLink className="h-3 w-3 ml-2" />
+                            </Button>
+                        </a>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* Stats */}
             {isConfigured && stats.total > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <Card>
@@ -310,12 +410,8 @@ export function AdminOffer18() {
                 </div>
             )}
 
-            <Tabs defaultValue="config" className="w-full">
+            <Tabs defaultValue="sync" className="w-full">
                 <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="config">
-                        <Settings className="h-4 w-4 mr-2" />
-                        Configuration
-                    </TabsTrigger>
                     <TabsTrigger value="sync">
                         <RefreshCw className="h-4 w-4 mr-2" />
                         Sync Offers
@@ -324,119 +420,19 @@ export function AdminOffer18() {
                         <Package className="h-4 w-4 mr-2" />
                         Browse Offers
                     </TabsTrigger>
+                    <TabsTrigger value="postbacks">
+                        <Activity className="h-4 w-4 mr-2" />
+                        Recent Postbacks
+                    </TabsTrigger>
                 </TabsList>
 
-                {/* Configuration Tab */}
-                <TabsContent value="config">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>API Configuration</CardTitle>
-                            <CardDescription>
-                                Configure your Offer18 API credentials. Get them from{" "}
-                                <a
-                                    href="https://knowledgebase.offer18.com/affiliate/affiliate-apis/offers-api"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-primary hover:underline inline-flex items-center gap-1"
-                                >
-                                    Offer18 Documentation
-                                    <ExternalLink className="h-3 w-3" />
-                                </a>
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <Alert>
-                                <AlertCircle className="h-4 w-4" />
-                                <AlertDescription>
-                                    You can also set these as environment variables: VITE_OFFER18_API_KEY, VITE_OFFER18_AFFILIATE_ID, VITE_OFFER18_MERCHANT_ID
-                                </AlertDescription>
-                            </Alert>
-
-                            <div className="grid gap-4">
-                                <div className="space-y-2">
-                                    <Label htmlFor="apiKey">API Key</Label>
-                                    <Input
-                                        id="apiKey"
-                                        type="password"
-                                        placeholder="Your Offer18 API Key"
-                                        value={config.apiKey}
-                                        onChange={(e) => setConfig({ ...config, apiKey: e.target.value })}
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="affiliateId">Affiliate ID (AID)</Label>
-                                    <Input
-                                        id="affiliateId"
-                                        type="text"
-                                        placeholder="Your Affiliate ID"
-                                        value={config.affiliateId}
-                                        onChange={(e) => setConfig({ ...config, affiliateId: e.target.value })}
-                                    />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <Label htmlFor="merchantId">Merchant ID (MID)</Label>
-                                    <Input
-                                        id="merchantId"
-                                        type="text"
-                                        placeholder="Your Merchant ID"
-                                        value={config.merchantId}
-                                        onChange={(e) => setConfig({ ...config, merchantId: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="flex gap-2">
-                                <Button onClick={handleConfigSave} className="flex-1">
-                                    Save Configuration
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    onClick={handleTestConnection}
-                                    disabled={!isConfigured || isSyncing}
-                                >
-                                    {isSyncing ? (
-                                        <>
-                                            <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                                            Testing...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <CheckCircle2 className="h-4 w-4 mr-2" />
-                                            Test Connection
-                                        </>
-                                    )}
-                                </Button>
-                            </div>
-
-                            <Alert className="mt-4">
-                                <Download className="h-4 w-4" />
-                                <AlertDescription className="flex items-center justify-between">
-                                    <span>Need help setting up real-time tracking?</span>
-                                    <a
-                                        href="/OFFER18_POSTBACK_SETUP.md"
-                                        download="OFFER18_POSTBACK_SETUP.md"
-                                        className="ml-2"
-                                    >
-                                        <Button variant="outline" size="sm">
-                                            <Download className="h-4 w-4 mr-2" />
-                                            Download Postback Guide
-                                        </Button>
-                                    </a>
-                                </AlertDescription>
-                            </Alert>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-
-                {/* Sync Tab */}
                 <TabsContent value="sync">
                     <Card>
                         <CardHeader>
                             <CardTitle>Sync Offers to Database</CardTitle>
                             <CardDescription>
-                                Fetch offers from Offer18 and sync them to your database
+                                Fetch offers from Offer18 (via the proxy) and upsert them into{" "}
+                                <code>stores</code>.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
@@ -444,7 +440,7 @@ export function AdminOffer18() {
                                 <Alert variant="destructive">
                                     <AlertCircle className="h-4 w-4" />
                                     <AlertDescription>
-                                        Please configure Offer18 API credentials first
+                                        Configure Offer18 secrets on the server before syncing.
                                     </AlertDescription>
                                 </Alert>
                             )}
@@ -455,10 +451,11 @@ export function AdminOffer18() {
                                     disabled={!isConfigured || isSyncing}
                                     className="w-full justify-start"
                                 >
-                                    <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
+                                    <RefreshCw
+                                        className={`h-4 w-4 mr-2 ${isSyncing ? "animate-spin" : ""}`}
+                                    />
                                     Sync All Active Offers
                                 </Button>
-
                                 <Button
                                     onClick={handleSyncAuthorizedOffers}
                                     disabled={!isConfigured || isSyncing}
@@ -468,7 +465,6 @@ export function AdminOffer18() {
                                     <CheckCircle2 className="h-4 w-4 mr-2" />
                                     Sync Only Authorized Offers
                                 </Button>
-
                                 <Button
                                     onClick={() => handleFetchOffers()}
                                     disabled={!isConfigured || isSyncing}
@@ -492,7 +488,6 @@ export function AdminOffer18() {
                     </Card>
                 </TabsContent>
 
-                {/* Offers Tab */}
                 <TabsContent value="offers">
                     <Card>
                         <CardHeader>
@@ -520,7 +515,9 @@ export function AdminOffer18() {
                                                         alt={offer.name}
                                                         className="w-16 h-16 rounded object-cover"
                                                         onError={(e) => {
-                                                            e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(offer.name)}&background=random`;
+                                                            e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                                                                offer.name,
+                                                            )}&background=random`;
                                                         }}
                                                     />
                                                     <div className="flex-1">
@@ -531,26 +528,22 @@ export function AdminOffer18() {
                                                                     {offer.offer_terms || offer.offer_kpi}
                                                                 </p>
                                                             </div>
-                                                            <div className="flex gap-2">
-                                                                <Badge variant={offer.status === 'active' ? 'default' : 'secondary'}>
-                                                                    {offer.status}
-                                                                </Badge>
-                                                                {offer.authorized === 'true' && (
-                                                                    <Badge variant="outline">Authorized</Badge>
-                                                                )}
-                                                            </div>
+                                                            <Badge variant={offer.status === "active" ? "default" : "secondary"}>
+                                                                {offer.status}
+                                                            </Badge>
                                                         </div>
-                                                        <div className="flex gap-4 mt-3 text-sm">
-                                                            <div className="flex items-center gap-1">
-                                                                <DollarSign className="h-4 w-4 text-green-500" />
-                                                                <span className="font-medium">{offer.payout[0]?.payout} {offer.currency}</span>
-                                                                <Badge variant="secondary" className="ml-1">{offer.model}</Badge>
-                                                            </div>
-                                                            {offer.country_allow && (
-                                                                <div className="flex items-center gap-1">
-                                                                    <Globe className="h-4 w-4 text-blue-500" />
-                                                                    <span className="text-muted-foreground">{offer.country_allow}</span>
-                                                                </div>
+                                                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                                            <span>ID: {offer.offerid}</span>
+                                                            <span>Model: {offer.model}</span>
+                                                            <span>
+                                                                Payout:{" "}
+                                                                {offer.payout?.[0]?.payout ?? "n/a"}{" "}
+                                                                {offer.currency}
+                                                            </span>
+                                                            {offer.authorized === "true" && (
+                                                                <Badge variant="outline" className="h-5">
+                                                                    Authorized
+                                                                </Badge>
                                                             )}
                                                         </div>
                                                     </div>
@@ -559,6 +552,95 @@ export function AdminOffer18() {
                                         ))}
                                     </div>
                                 </ScrollArea>
+                            )}
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                <TabsContent value="postbacks">
+                    <Card>
+                        <CardHeader>
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <CardTitle>Recent Postbacks</CardTitle>
+                                    <CardDescription>
+                                        The 25 most recent rows inserted by the{" "}
+                                        <code>track-conversion</code> edge function. Point your
+                                        Offer18 postback to{" "}
+                                        <code>
+                                            {
+                                                (import.meta.env.VITE_SUPABASE_URL as string) ||
+                                                "https://&lt;supabase&gt;"
+                                            }
+                                            /functions/v1/track-conversion
+                                        </code>
+                                        .
+                                    </CardDescription>
+                                </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={refreshPostbacks}
+                                    disabled={postbacksLoading}
+                                >
+                                    <RefreshCw
+                                        className={`h-4 w-4 mr-2 ${postbacksLoading ? "animate-spin" : ""}`}
+                                    />
+                                    Refresh
+                                </Button>
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            {postbacksLoading ? (
+                                <p className="text-sm text-muted-foreground">Loading…</p>
+                            ) : postbacks.length === 0 ? (
+                                <Alert>
+                                    <AlertCircle className="h-4 w-4" />
+                                    <AlertDescription>
+                                        No conversions recorded yet. Fire a test postback at{" "}
+                                        <code>/functions/v1/track-conversion</code> to see it
+                                        here.
+                                    </AlertDescription>
+                                </Alert>
+                            ) : (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                        <thead>
+                                            <tr className="text-left border-b">
+                                                <th className="py-2 pr-4">When</th>
+                                                <th className="py-2 pr-4">Order</th>
+                                                <th className="py-2 pr-4">Amount</th>
+                                                <th className="py-2 pr-4">Status</th>
+                                                <th className="py-2 pr-4">Description</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {postbacks.map((row) => (
+                                                <tr key={row.id} className="border-b last:border-0">
+                                                    <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground">
+                                                        {row.created_at
+                                                            ? new Date(row.created_at).toLocaleString()
+                                                            : "—"}
+                                                    </td>
+                                                    <td className="py-2 pr-4 font-mono text-xs">
+                                                        {row.order_id ?? "—"}
+                                                    </td>
+                                                    <td className="py-2 pr-4">
+                                                        {row.amount !== null ? `₹${row.amount}` : "—"}
+                                                    </td>
+                                                    <td className="py-2 pr-4">
+                                                        <Badge variant="outline">
+                                                            {row.status ?? "pending"}
+                                                        </Badge>
+                                                    </td>
+                                                    <td className="py-2 pr-4 text-muted-foreground">
+                                                        {row.description ?? "—"}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
                             )}
                         </CardContent>
                     </Card>
