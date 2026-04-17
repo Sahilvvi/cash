@@ -83,10 +83,12 @@ serve(async (req: Request) => {
         }
         const jwt = authHeader.slice("bearer ".length).trim();
 
-        const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-            global: { headers: { Authorization: `Bearer ${jwt}` } },
-        });
-        const { data: userData, error: userErr } = await authClient.auth.getUser();
+        // Pass the JWT explicitly to getUser(). Otherwise supabase-js looks at
+        // its own (empty) stored session and the auth check silently fails
+        // regardless of the Authorization header. This is the pattern that
+        // works for ES256 access tokens too.
+        const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const { data: userData, error: userErr } = await authClient.auth.getUser(jwt);
         if (userErr || !userData?.user) {
             return json({ error: "Invalid or expired session" }, 401);
         }
