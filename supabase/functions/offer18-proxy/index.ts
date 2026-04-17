@@ -7,10 +7,12 @@
 //      keep it only in Supabase function secrets here.
 //
 // Auth model:
-//   The caller MUST be an authenticated Supabase user whose `user_id` exists
-//   in the `admin_users` table. We verify the user JWT via the anon client,
-//   then perform the admin lookup with the service role client (which
-//   bypasses RLS and can reliably read `admin_users`).
+//   ALL requests (including `?action=status`) require an authenticated
+//   Supabase user whose `user_id` exists in the `admin_users` table. We
+//   verify the user JWT via the anon client, then perform the admin lookup
+//   with the service role client (which bypasses RLS and can reliably read
+//   `admin_users`). The status probe is admin-gated so unauthenticated
+//   callers can't learn the affiliate_id / merchant_id.
 //
 // Required function secrets:
 //   OFFER18_API_KEY        - Offer18 API key (from Offer18 dashboard)
@@ -69,32 +71,12 @@ serve(async (req: Request) => {
         const OFFER18_AFFILIATE_ID = Deno.env.get("OFFER18_AFFILIATE_ID") ?? "";
         const OFFER18_MERCHANT_ID = Deno.env.get("OFFER18_MERCHANT_ID") ?? "";
 
-        // Health check / config probe: tells the admin UI whether the function
-        // has its Offer18 secrets set, without actually hitting Offer18.
         const url = new URL(req.url);
-        if (url.searchParams.get("action") === "status") {
-            return json({
-                configured: !!(
-                    OFFER18_API_KEY &&
-                    OFFER18_AFFILIATE_ID &&
-                    OFFER18_MERCHANT_ID
-                ),
-                affiliate_id: OFFER18_AFFILIATE_ID || null,
-                merchant_id: OFFER18_MERCHANT_ID || null,
-            });
-        }
-
-        if (!OFFER18_API_KEY || !OFFER18_AFFILIATE_ID || !OFFER18_MERCHANT_ID) {
-            return json(
-                {
-                    error:
-                        "Offer18 secrets are not configured on the server. Set OFFER18_API_KEY, OFFER18_AFFILIATE_ID, OFFER18_MERCHANT_ID as Supabase function secrets.",
-                },
-                500,
-            );
-        }
+        const isStatus = url.searchParams.get("action") === "status";
 
         // --- Auth: caller must be an admin --------------------------------
+        // Note: we intentionally run the auth check BEFORE the status probe
+        // so we don't leak affiliate/merchant IDs to unauthenticated callers.
         const authHeader = req.headers.get("Authorization") ?? "";
         if (!authHeader.toLowerCase().startsWith("bearer ")) {
             return json({ error: "Missing Authorization header" }, 401);
@@ -121,6 +103,31 @@ serve(async (req: Request) => {
         }
         if (!adminRow) {
             return json({ error: "Admin access required" }, 403);
+        }
+
+        // Health check / config probe: tells the admin UI whether the function
+        // has its Offer18 secrets set, without actually hitting Offer18.
+        // Admin-only (see auth check above) to avoid leaking internal IDs.
+        if (isStatus) {
+            return json({
+                configured: !!(
+                    OFFER18_API_KEY &&
+                    OFFER18_AFFILIATE_ID &&
+                    OFFER18_MERCHANT_ID
+                ),
+                affiliate_id: OFFER18_AFFILIATE_ID || null,
+                merchant_id: OFFER18_MERCHANT_ID || null,
+            });
+        }
+
+        if (!OFFER18_API_KEY || !OFFER18_AFFILIATE_ID || !OFFER18_MERCHANT_ID) {
+            return json(
+                {
+                    error:
+                        "Offer18 secrets are not configured on the server. Set OFFER18_API_KEY, OFFER18_AFFILIATE_ID, OFFER18_MERCHANT_ID as Supabase function secrets.",
+                },
+                500,
+            );
         }
 
         // --- Build outbound Offer18 URL -----------------------------------
