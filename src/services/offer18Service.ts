@@ -227,13 +227,21 @@ class Offer18Service {
     }
 
     async fetchActiveOffers(params?: Omit<Offer18QueryParams, 'offer_status'>): Promise<Offer18Offer[]> {
-        const response = await this.fetchOffers({ ...params, offer_status: 1 });
-        return Object.values(response.data);
+        // Offer18's server-side `offer_status=1` filter also requires the offer
+        // to be authorized for your affiliate account, so for accounts with no
+        // authorized offers it returns "no offers found". We want "active"
+        // regardless of authorization — fetch the full list and filter
+        // client-side on offer.status === 'active'.
+        const response = await this.fetchOffers(params);
+        return Object.values(response.data).filter((o) => o.status === 'active');
     }
 
     async fetchAuthorizedOffers(params?: Omit<Offer18QueryParams, 'authorized'>): Promise<Offer18Offer[]> {
-        const response = await this.fetchOffers({ ...params, authorized: 1 });
-        return Object.values(response.data);
+        // Same pattern as fetchActiveOffers — Offer18's `authorized=1` returns
+        // "no offers found" for accounts without pre-authorized offers. Pull
+        // everything and filter on offer.authorized === 'true'.
+        const response = await this.fetchOffers(params);
+        return Object.values(response.data).filter((o) => o.authorized === 'true');
     }
 
     async fetchOffersByCategory(category: string, params?: Offer18QueryParams): Promise<Offer18Offer[]> {
