@@ -178,7 +178,7 @@ export function AdminOffer18() {
                 return;
             }
 
-            const rows = selected.map((offer) => ({
+            const mappedRows = selected.map((offer) => ({
                 ...offer18Service.convertToStore(offer),
                 updated_at: new Date().toISOString(),
                 is_active: true,
@@ -186,6 +186,23 @@ export function AdminOffer18() {
                 network_type: "offer18",
                 offers_count: 1,
             }));
+
+            // Dedupe by slug: Offer18's feed can have two different offers
+            // that collapse to the same slug (e.g. "Angel One App" and
+            // "Angel One_App" both → `angel-one-app`). Postgres rejects
+            // an upsert batch that targets the same conflict row twice
+            // ("ON CONFLICT DO UPDATE command cannot affect row a second
+            // time"), so we keep the last occurrence of each slug.
+            const bySlug = new Map<string, (typeof mappedRows)[number]>();
+            for (const row of mappedRows) {
+                if (row.slug) bySlug.set(row.slug, row);
+            }
+            const rows = Array.from(bySlug.values());
+
+            if (rows.length < mappedRows.length) {
+                const skipped = mappedRows.length - rows.length;
+                toast.info(`Deduplicated ${skipped} offers that shared a slug`);
+            }
 
             const BATCH = 50;
             let success = 0;
