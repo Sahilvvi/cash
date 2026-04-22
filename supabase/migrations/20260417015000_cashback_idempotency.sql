@@ -10,6 +10,20 @@
 -- order_id namespace). order_id can be NULL for test/manual rows so we use
 -- a partial unique index.
 
+-- Make sure the columns the unique index (and the edge function) depend on
+-- actually exist. In the live `cikmdkkngifzpulrwkwt` project these columns
+-- were added by a side-loaded `supabase_complete_schema.sql` run, but they
+-- are not in the migration chain, so a fresh `supabase db push` on a new
+-- project wouldn't have them. Guarded with IF NOT EXISTS so this stays a
+-- no-op everywhere they already exist.
+ALTER TABLE public.cashback_transactions
+    ADD COLUMN IF NOT EXISTS network_type text DEFAULT 'generic_postback';
+
+ALTER TABLE public.affiliate_clicks
+    ADD COLUMN IF NOT EXISTS network_type text,
+    ADD COLUMN IF NOT EXISTS offer18_click_id text,
+    ADD COLUMN IF NOT EXISTS conversion_status text;
+
 -- Drop the non-unique index that existed before — the new unique index
 -- supersedes it for lookups as well.
 DROP INDEX IF EXISTS idx_cashback_transactions_order_id;
