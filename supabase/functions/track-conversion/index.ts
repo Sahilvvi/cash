@@ -71,7 +71,13 @@ serve(async (req) => {
         // (same network_type + order_id), return the existing row instead
         // of inserting a duplicate. Networks retry postbacks on network
         // failures so this path is hit in normal operation.
-        const networkType = clickData.network_type || params.network_type || 'unknown'
+        // Fallback must match the DB default on `cashback_transactions.network_type`
+        // (set to 'generic_postback' in migration 20260417015000). If this
+        // differs, rows inserted by other code paths (e.g. fetch-conversions) or
+        // rows backfilled by the ALTER TABLE would get 'generic_postback' while
+        // our idempotency lookup would miss them with a different fallback,
+        // letting a second row slip in under the unique index.
+        const networkType = clickData.network_type || params.network_type || 'generic_postback'
 
         if (order_id) {
             const { data: existing } = await supabaseClient
