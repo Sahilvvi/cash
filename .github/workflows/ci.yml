@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  lint-build:
+    name: Lint + typecheck + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        # main has ~100 pre-existing eslint violations that predate this PR.
+        # We report them but don't fail CI until they're cleaned up in a
+        # dedicated follow-up.
+        continue-on-error: true
+        run: npm run lint
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+        env:
+          # Build needs these at bundling time. The values are non-secret
+          # (anon key is public by design).
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL || 'https://cikmdkkngifzpulrwkwt.supabase.co' }}
+          VITE_SUPABASE_PROJECT_ID: ${{ vars.SUPABASE_PROJECT_ID || 'cikmdkkngifzpulrwkwt' }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+
+  backend-verify:
+    name: End-to-end backend verify
+    runs-on: ubuntu-latest
+    # Only runs when Supabase secrets are configured on the repo. If a
+    # contributor's PR doesn't have access (forked PRs), this job is a
+    # no-op instead of failing.
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run backend verify script
+        if: ${{ env.SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE != '' && env.SUPABASE_ANON_KEY != '' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          POSTBACK_SECRET: ${{ secrets.POSTBACK_SECRET }}
+        run: node scripts/verify-postback-flow.mjs
