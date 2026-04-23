@@ -4,6 +4,7 @@ import Footer from "@/components/layout/Footer";
 import StoreCard from "@/components/cards/StoreCard";
 import { useStores } from "@/hooks/useStores";
 import { useTrackAffiliateClick } from "@/hooks/useAffiliateTracking";
+import { formatCashbackShort } from "@/lib/cashback";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, Grid, List, TrendingUp, Star, Clock } from "lucide-react";
@@ -203,7 +204,7 @@ const StoresPage = () => {
                   id={store.slug}
                   name={store.name}
                   logo={store.logo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(store.name.substring(0, 2))}&background=1877F2&color=fff&size=128&bold=true`}
-                  cashback={`${store.cashback_percent || 0}%`}
+                  cashbackPercent={store.cashback_percent}
                   cashbackType={(store.cashback_type as "percent" | "flat" | "voucher") || "percent"}
                   offersCount={store.offers_count || 0}
                   isNew={store.is_new}
@@ -222,7 +223,7 @@ const StoresPage = () => {
                   <div className="flex-1">
                     <h3 className="font-semibold font-heading">{store.name}</h3>
                     <p className="text-primary text-sm font-medium">
-                      Up to {store.cashback_percent || 0}% Cashback
+                      {formatCashbackShort(store.cashback_percent, store.cashback_type)}
                     </p>
                     <p className="text-muted-foreground text-xs">{store.offers_count || 0} Offers</p>
                   </div>

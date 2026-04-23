@@ -8,6 +8,7 @@ import { ExternalLink, Star, Tag, CheckCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useTrackAffiliateClick } from "@/hooks/useAffiliateTracking";
+import { formatCashbackLong, formatCashbackRate } from "@/lib/cashback";
 import { toast } from "sonner";
 
 const StoreDetailPage = () => {
@@ -159,8 +160,7 @@ const StoreDetailPage = () => {
                   <div>
                     <p className="text-sm text-muted-foreground">Cashback Reward</p>
                     <p className="text-2xl font-bold text-primary">
-                      Up to {store.cashback_percent}%
-                      {store.cashback_type === 'flat' && ' Flat'}
+                      {formatCashbackLong(store.cashback_percent, store.cashback_type)}
                     </p>
                   </div>
                   <Button size="lg" className="flex-shrink-0" onClick={handleShopAndEarn}>
@@ -203,7 +203,7 @@ const StoreDetailPage = () => {
                 <tbody>
                   <tr className="border-b border-border">
                     <td className="py-3 px-4">{store.category || 'All Products'}</td>
-                    <td className="py-3 px-4 text-primary font-semibold">{store.cashback_percent}%</td>
+                    <td className="py-3 px-4 text-primary font-semibold">{formatCashbackRate(store.cashback_percent, store.cashback_type)}</td>
                     <td className="py-3 px-4">24-48 hours</td>
                   </tr>
                 </tbody>

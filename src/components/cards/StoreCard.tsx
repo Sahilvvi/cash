@@ -1,39 +1,39 @@
 import { ExternalLink } from "lucide-react";
 import { Link } from "react-router-dom";
+import { formatCashbackShort } from "@/lib/cashback";
 
 interface StoreCardProps {
   id: string;
   name: string;
   logo: string;
-  cashback: string;
+  // Accept the numeric percent + type the rest of the app already uses.
+  // Older callers can still pass a pre-formatted `cashback` string.
+  cashbackPercent?: number | string | null;
+  cashback?: string;
   cashbackType: "percent" | "flat" | "voucher";
   offersCount: number;
   isNew?: boolean;
   isTrending?: boolean;
 }
 
-const StoreCard = ({ 
-  id, 
-  name, 
-  logo, 
-  cashback, 
-  cashbackType, 
-  offersCount, 
-  isNew, 
-  isTrending 
+const StoreCard = ({
+  id,
+  name,
+  logo,
+  cashbackPercent,
+  cashback,
+  cashbackType,
+  offersCount,
+  isNew,
+  isTrending,
 }: StoreCardProps) => {
-  const getCashbackText = () => {
-    switch (cashbackType) {
-      case "percent":
-        return `Up to ${cashback} PW Cashback`;
-      case "flat":
-        return `Flat ${cashback} PW Cashback`;
-      case "voucher":
-        return `${cashback} PW Voucher Cash`;
-      default:
-        return `${cashback} Cashback`;
-    }
-  };
+  const cashbackText =
+    cashbackPercent !== undefined && cashbackPercent !== null
+      ? formatCashbackShort(cashbackPercent, cashbackType)
+      // Fallback for legacy callers that pass a preformatted string
+      : cashback
+      ? `${cashback} Cashback`
+      : "Cashback Available";
 
   return (
     <Link to={`/store/${id}`} className="store-card group cursor-pointer block">
@@ -67,7 +67,7 @@ const StoreCard = ({
         {/* Cashback Info */}
         <div className="text-center">
           <p className="text-primary font-semibold text-sm mb-1">
-            {getCashbackText()}
+            {cashbackText}
           </p>
           <p className="text-muted-foreground text-xs">
             {offersCount} Offers

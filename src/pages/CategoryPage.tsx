@@ -178,7 +178,7 @@ const CategoryPage = () => {
                     id={store.id}
                     name={store.name}
                     logo={store.logo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(store.name.substring(0, 2))}&background=F37022&color=fff&size=128&bold=true`}
-                    cashback={`${store.cashback_percent || 0}%`}
+                    cashbackPercent={store.cashback_percent}
                     cashbackType={(store.cashback_type as "percent" | "flat" | "voucher") || "percent"}
                     isNew={store.is_new || false}
                     isTrending={store.is_trending || false}

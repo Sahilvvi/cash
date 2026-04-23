@@ -103,7 +103,7 @@ const Index = () => {
                   id={store.slug}
                   name={store.name}
                   logo={store.logo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(store.name)}&background=random`}
-                  cashback={`${store.cashback_percent}%`}
+                  cashbackPercent={store.cashback_percent}
                   cashbackType={store.cashback_type as any}
                   offersCount={store.offers_count || 0}
                   isNew={store.is_new}
@@ -239,7 +239,7 @@ const Index = () => {
                   id={store.slug}
                   name={store.name}
                   logo={store.logo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(store.name)}&background=random`}
-                  cashback={`${store.cashback_percent}%`}
+                  cashbackPercent={store.cashback_percent}
                   cashbackType={store.cashback_type as any}
                   offersCount={store.offers_count || 0}
                   isNew={store.is_new}
