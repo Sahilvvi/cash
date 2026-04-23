@@ -46,18 +46,26 @@ jobs:
     # contributor's PR doesn't have access (forked PRs), this job is a
     # no-op instead of failing.
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    # Job-level env so the step-level `if` below can see these values.
+    # (A step's `env:` is only applied *after* its `if` is evaluated, so
+    # referencing them at job level is required.)
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      POSTBACK_SECRET: ${{ secrets.POSTBACK_SECRET }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        if: ${{ env.SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE != '' && env.SUPABASE_ANON_KEY != '' }}
+        run: npm ci
 
       - name: Run backend verify script
         if: ${{ env.SUPABASE_URL != '' && env.SUPABASE_SERVICE_ROLE != '' && env.SUPABASE_ANON_KEY != '' }}
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          POSTBACK_SECRET: ${{ secrets.POSTBACK_SECRET }}
         run: node scripts/verify-postback-flow.mjs

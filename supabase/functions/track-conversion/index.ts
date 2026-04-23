@@ -32,7 +32,10 @@ serve(async (req) => {
             params = await req.json()
         }
 
-        console.log('Received conversion tracking request:', params)
+        // Strip `token` from logged params — it carries POSTBACK_SECRET and
+        // must never end up in the edge function logs.
+        const { token: _loggedToken, ...loggableParams } = params
+        console.log('Received conversion tracking request:', loggableParams)
 
         // Gate: if POSTBACK_SECRET is configured, reject any request whose
         // `token` query param (or `X-Postback-Token` header) doesn't match.

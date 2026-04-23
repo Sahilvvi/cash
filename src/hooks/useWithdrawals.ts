@@ -81,19 +81,23 @@ export const useRequestWithdrawal = () => {
     }) => {
       if (!user) throw new Error("Not authenticated");
 
-      const { data, error } = await supabase
-        .from("withdrawals")
-        .insert([{
-          user_id: user.id,
-          amount,
-          payment_method: paymentMethod,
-          payment_details: paymentDetails,
-        }])
-        .select()
-        .single();
+      // Server-side: validates amount >= 100, payment method/details,
+      // available balance, and inserts the withdrawal atomically.
+      // Client never writes to `withdrawals` directly (RLS blocks it).
+      const { data, error } = await (supabase.rpc as unknown as (
+        fn: string,
+        args: Record<string, unknown>
+      ) => Promise<{ data: unknown; error: { message: string } | null }>)(
+        "create_withdrawal",
+        {
+          p_amount: amount,
+          p_payment_method: paymentMethod,
+          p_payment_details: paymentDetails,
+        }
+      );
 
-      if (error) throw error;
-      return data;
+      if (error) throw new Error(error.message);
+      return data as Withdrawal;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["withdrawals"] });
