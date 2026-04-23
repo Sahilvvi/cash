@@ -428,16 +428,30 @@ async function testWithdrawalFlow() {
         `over-balance error mentions insufficient (got ${JSON.stringify(overBalance.json)})`
     );
 
-    // Valid path
+    // Valid path — camelCase `upiId` (what the existing UI sends).
     const ok = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
         method: "POST",
         body: JSON.stringify({
-            p_amount: 200, p_payment_method: "upi",
-            p_payment_details: { upi_id: "verify@upi" },
+            p_amount: 120, p_payment_method: "upi",
+            p_payment_details: { upiId: "verify@upi" },
         }),
     });
-    assert(ok.status === 200, `valid withdrawal → 200 (got ${ok.status}, body=${JSON.stringify(ok.json)})`);
+    assert(ok.status === 200, `UPI withdrawal with camelCase upiId → 200 (got ${ok.status}, body=${JSON.stringify(ok.json)})`);
     assert(ok.json?.status === "pending", `withdrawal row status=pending`);
+
+    // Valid path — bank_transfer + camelCase account fields (UI wiring).
+    const okBank = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 130, p_payment_method: "bank_transfer",
+            p_payment_details: {
+                accountNumber: "1234567890",
+                ifscCode: "HDFC0001234",
+                accountName: "Verify User",
+            },
+        }),
+    });
+    assert(okBank.status === 200, `bank_transfer with camelCase details → 200 (got ${okBank.status}, body=${JSON.stringify(okBank.json)})`);
 
     // Second withdraw that combined would exceed balance
     const overAfter = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
