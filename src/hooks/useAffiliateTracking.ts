@@ -48,12 +48,16 @@ export const useTrackAffiliateClick = () => {
           finalUrl = `${finalUrl}${separator}${paramName}=${sessionId}`;
         }
 
+        // Record the click with the real network so that postbacks can
+        // be bound to it (track-conversion rejects postbacks whose
+        // network_type doesn't match the click).
         await supabase
           .from("affiliate_clicks")
           .insert({
             user_id: user.id,
             store_id: storeId,
             session_id: sessionId,
+            network_type: networkType || null,
           });
       }
 
