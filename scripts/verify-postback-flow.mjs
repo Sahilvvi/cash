@@ -145,6 +145,7 @@ async function cleanup() {
         // kill derived rows first (FK)
         await rest(`/rest/v1/user_gift_cards?user_id=eq.${uid}`, { method: "DELETE" });
         await rest(`/rest/v1/user_spins?user_id=eq.${uid}`, { method: "DELETE" });
+        await rest(`/rest/v1/withdrawals?user_id=eq.${uid}`, { method: "DELETE" });
         await rest(`/rest/v1/cashback_transactions?user_id=eq.${uid}`, { method: "DELETE" });
         await rest(`/rest/v1/affiliate_clicks?user_id=eq.${uid}`, { method: "DELETE" });
         // referrals reference profile.id not user_id; delete via join
@@ -362,6 +363,107 @@ async function testSpinFlow() {
     assert(directInsert.status >= 400, `direct insert into user_spins blocked (got ${directInsert.status})`);
 }
 
+// --------------- Section C2: withdrawal ---------------
+async function testWithdrawalFlow() {
+    console.log("\n=== C2. Withdrawal RPC ===");
+    const user = await createUser("withdraw");
+    console.log(`  created user ${user.email}`);
+
+    // Seed ₹500 balance
+    await rest("/rest/v1/cashback_transactions", {
+        method: "POST",
+        body: JSON.stringify({
+            user_id: user.id, amount: 500, status: "confirmed",
+            network_type: "test", description: "withdraw seed",
+        }),
+    });
+
+    const auth = await signInUser(user.email, user.password);
+    if (!auth.access_token) {
+        assert(false, `user sign-in failed: ${JSON.stringify(auth)}`);
+        return;
+    }
+
+    // Below minimum (₹100) → rejected
+    const tooSmall = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 50, p_payment_method: "upi",
+            p_payment_details: { upi_id: "x@upi" },
+        }),
+    });
+    assert(tooSmall.status !== 200, `below-minimum withdrawal rejected (got ${tooSmall.status})`);
+
+    // Bad payment method → rejected
+    const badMethod = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 200, p_payment_method: "crypto",
+            p_payment_details: {},
+        }),
+    });
+    assert(badMethod.status !== 200, `unsupported method rejected (got ${badMethod.status})`);
+
+    // Missing UPI id → rejected
+    const missingField = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 200, p_payment_method: "upi",
+            p_payment_details: {},
+        }),
+    });
+    assert(missingField.status !== 200, `missing upi_id rejected (got ${missingField.status})`);
+
+    // Over-balance → rejected
+    const overBalance = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 10000, p_payment_method: "upi",
+            p_payment_details: { upi_id: "x@upi" },
+        }),
+    });
+    assert(overBalance.status !== 200, `over-balance rejected (got ${overBalance.status})`);
+    assert(
+        String(overBalance.json?.message || "").toLowerCase().includes("insufficient"),
+        `over-balance error mentions insufficient (got ${JSON.stringify(overBalance.json)})`
+    );
+
+    // Valid path
+    const ok = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 200, p_payment_method: "upi",
+            p_payment_details: { upi_id: "verify@upi" },
+        }),
+    });
+    assert(ok.status === 200, `valid withdrawal → 200 (got ${ok.status}, body=${JSON.stringify(ok.json)})`);
+    assert(ok.json?.status === "pending", `withdrawal row status=pending`);
+
+    // Second withdraw that combined would exceed balance
+    const overAfter = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 400, p_payment_method: "upi",
+            p_payment_details: { upi_id: "verify@upi" },
+        }),
+    });
+    assert(overAfter.status !== 200, `second withdraw exceeding remaining balance rejected (got ${overAfter.status})`);
+
+    // Direct insert as user → RLS reject
+    const direct = await asUser(auth.access_token, "/rest/v1/withdrawals", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+            user_id: user.id, amount: 100, payment_method: "upi",
+            payment_details: { upi_id: "x@upi" },
+        }),
+    });
+    assert(direct.status >= 400, `direct insert into withdrawals blocked (got ${direct.status})`);
+
+    // Cleanup withdrawals for this user
+    await rest(`/rest/v1/withdrawals?user_id=eq.${user.id}`, { method: "DELETE" });
+}
+
 // --------------- Section D: referral ---------------
 async function testReferralFlow() {
     console.log("\n=== D. Referral trigger ===");
@@ -445,6 +547,7 @@ async function main() {
         await testPostbackFlow();
         await testGiftCardFlow();
         await testSpinFlow();
+        await testWithdrawalFlow();
         await testReferralFlow();
     } finally {
         console.log("\nCleaning up…");
