@@ -127,7 +127,10 @@ async function asUser(accessToken, path, init = {}) {
 const cleanupUserIds = [];
 
 async function createUser(label) {
-    const email = `${label}+${Date.now()}-${randomUUID().slice(0, 8)}@devin.test`;
+    // Use '-' (not '+') because the normalize_email() trigger strips `+alias`
+    // suffixes, which would cause every "referrer+X" to collide on the unique
+    // normalized_email index across runs.
+    const email = `${label}-${Date.now()}-${randomUUID().slice(0, 8)}@devin.test`;
     const password = randomUUID();
     const created = await rest("/auth/v1/admin/users", {
         method: "POST",
@@ -439,6 +442,11 @@ async function testWithdrawalFlow() {
     assert(ok.status === 200, `UPI withdrawal with camelCase upiId → 200 (got ${ok.status}, body=${JSON.stringify(ok.json)})`);
     assert(ok.json?.status === "pending", `withdrawal row status=pending`);
 
+    // The withdrawal-cooldown trigger is tested separately in section E.
+    // For the remaining shape assertions here, delete the row so the
+    // cooldown doesn't mask the thing we're actually testing.
+    await rest(`/rest/v1/withdrawals?user_id=eq.${user.id}`, { method: "DELETE" });
+
     // Valid path — bank_transfer + camelCase account fields (UI wiring).
     const okBank = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
         method: "POST",
@@ -453,7 +461,11 @@ async function testWithdrawalFlow() {
     });
     assert(okBank.status === 200, `bank_transfer with camelCase details → 200 (got ${okBank.status}, body=${JSON.stringify(okBank.json)})`);
 
-    // Second withdraw that combined would exceed balance
+    // Clear the cooldown so the next assertion tests the *balance* path and
+    // not the cooldown path. Remaining balance after the two successful
+    // withdrawals is 500 - 120 - 130 = 250, so 400 must be rejected.
+    await rest(`/rest/v1/withdrawals?user_id=eq.${user.id}&amount=eq.120`, { method: "DELETE" });
+
     const overAfter = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
         method: "POST",
         body: JSON.stringify({
@@ -461,7 +473,7 @@ async function testWithdrawalFlow() {
             p_payment_details: { upi_id: "verify@upi" },
         }),
     });
-    assert(overAfter.status !== 200, `second withdraw exceeding remaining balance rejected (got ${overAfter.status})`);
+    assert(overAfter.status !== 200, `withdraw exceeding remaining balance rejected (got ${overAfter.status})`);
 
     // Direct insert as user → RLS reject
     const direct = await asUser(auth.access_token, "/rest/v1/withdrawals", {
@@ -556,6 +568,199 @@ async function testReferralFlow() {
         `referred got ₹25 referral credit`);
 }
 
+// --------------- Section E: fraud hardening ---------------
+async function testFraudHardening() {
+    console.log("\n=== E. Fraud hardening ===");
+
+    // --- E.1 Click-binding: network_type mismatch rejected ---
+    const u = await createUser("fraud-click");
+    const stores = await rest("/rest/v1/stores?select=id&is_active=eq.true&limit=1");
+    const storeId = stores.json?.[0]?.id;
+    const sid = randomUUID();
+    await rest("/rest/v1/affiliate_clicks", {
+        method: "POST",
+        body: JSON.stringify({
+            user_id: u.id, store_id: storeId, session_id: sid, network_type: "offer18",
+        }),
+    });
+    const tokenQS = POSTBACK_SECRET ? `&token=${encodeURIComponent(POSTBACK_SECRET)}` : "";
+    const wrongNet = await fetch(
+        `${SUPABASE_URL}/functions/v1/track-conversion?session_id=${sid}&amount=1&order_id=MISMATCH-${Date.now()}&network_type=amazon${tokenQS}`,
+        { headers: HEADERS_ADMIN }
+    );
+    assert(wrongNet.status === 400, `network_type mismatch rejected (got ${wrongNet.status})`);
+
+    // --- E.2 Click-binding: store_id mismatch rejected ---
+    const wrongStore = await fetch(
+        `${SUPABASE_URL}/functions/v1/track-conversion?session_id=${sid}&amount=1&order_id=MISMATCH2-${Date.now()}&store_id=${randomUUID()}${tokenQS}`,
+        { headers: HEADERS_ADMIN }
+    );
+    assert(wrongStore.status === 400, `store_id mismatch rejected (got ${wrongStore.status})`);
+
+    // --- E.3 Click-binding: stale click (>90d) rejected ---
+    const staleSid = randomUUID();
+    await rest("/rest/v1/affiliate_clicks", {
+        method: "POST",
+        body: JSON.stringify({
+            user_id: u.id, store_id: storeId, session_id: staleSid, network_type: "offer18",
+            clicked_at: new Date(Date.now() - 100 * 86400000).toISOString(),
+        }),
+    });
+    const stale = await fetch(
+        `${SUPABASE_URL}/functions/v1/track-conversion?session_id=${staleSid}&amount=1&order_id=STALE-${Date.now()}${tokenQS}`,
+        { headers: HEADERS_ADMIN }
+    );
+    assert(stale.status === 410, `stale click (>90d) rejected with 410 (got ${stale.status})`);
+
+    // --- E.4 Email normalization: duplicate normalized email blocked ---
+    // Create baseline gmail address, then try to create its dot+alias twin.
+    const stamp = Date.now();
+    const base = `fraudtest${stamp}@gmail.com`;
+    const twin = `fraud.test${stamp}+alias@gmail.com`; // same normalized
+    const okBase = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+        method: "POST", headers: HEADERS_ADMIN,
+        body: JSON.stringify({ email: base, password: "Testpass123!", email_confirm: true }),
+    });
+    const okBaseJson = await okBase.json();
+    assert(okBase.status === 200, `baseline gmail signup ok (got ${okBase.status})`);
+    // Insert matching profile (normalized_email column is GENERATED from email)
+    await rest("/rest/v1/profiles", {
+        method: "POST",
+        body: JSON.stringify({ user_id: okBaseJson.id, email: base, full_name: "Base" }),
+    });
+    const twinSignup = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+        method: "POST", headers: HEADERS_ADMIN,
+        body: JSON.stringify({ email: twin, password: "Testpass123!", email_confirm: true }),
+    });
+    const twinSignupJson = await twinSignup.json();
+    const twinUid = twinSignupJson.id;
+    const twinInsert = await rest("/rest/v1/profiles", {
+        method: "POST",
+        body: JSON.stringify({ user_id: twinUid, email: twin, full_name: "Twin" }),
+    });
+    assert(twinInsert.status >= 400, `duplicate normalized gmail rejected (got ${twinInsert.status})`);
+    // Cleanup twin + base
+    if (twinUid) await rest(`/auth/v1/admin/users/${twinUid}`, { method: "DELETE" });
+    if (okBaseJson.id) await rest(`/auth/v1/admin/users/${okBaseJson.id}`, { method: "DELETE" });
+
+    // --- E.5 Referral velocity cap: 11th referral in 30d rejected ---
+    // The unique normalized_email index already blocks the most common
+    // self-referral vectors (gmail dot/alias tricks) at signup time —
+    // that's what E.4 proves. This section proves the defense-in-depth
+    // anti-abuse trigger on referrals itself: one referrer can't bank
+    // more than 10 referrals in a 30-day window.
+    const refr = await createUser("velocity-ref");
+    const refrProf = await rest(
+        `/rest/v1/profiles?user_id=eq.${refr.id}&select=id`
+    );
+    let refrProfileId = refrProf.json?.[0]?.id;
+    if (!refrProfileId) {
+        const ins = await rest("/rest/v1/profiles", {
+            method: "POST", headers: { Prefer: "return=representation" },
+            body: JSON.stringify({ user_id: refr.id, email: refr.email, full_name: "Velocity" }),
+        });
+        refrProfileId = ins.json?.[0]?.id;
+    }
+
+    const referredProfileIds = [];
+    for (let i = 0; i < 10; i += 1) {
+        const r = await createUser(`velocity-rcv-${i}`);
+        // Profiles auto-create via on_auth_user_created; delete-reinsert so
+        // the AFTER INSERT trigger fires with referred_by set.
+        await rest(`/rest/v1/profiles?user_id=eq.${r.id}`, { method: "DELETE" });
+        const p = await rest("/rest/v1/profiles", {
+            method: "POST", headers: { Prefer: "return=representation" },
+            body: JSON.stringify({
+                user_id: r.id, email: r.email, full_name: `Rcv${i}`,
+                referred_by: refrProfileId,
+            }),
+        });
+        referredProfileIds.push(p.json?.[0]?.id);
+    }
+    // 10 referral rows should now exist (auto-created by the existing
+    // trigger). Manual 11th insert should be blocked by the velocity cap.
+    const count10 = await rest(
+        `/rest/v1/referrals?referrer_id=eq.${refrProfileId}&select=id`
+    );
+    assert(Array.isArray(count10.json) && count10.json.length === 10,
+        `10 referrals banked for the referrer (got ${count10.json?.length})`);
+
+    const extra = await createUser("velocity-rcv-extra");
+    // Profile is auto-created; just fetch its id.
+    const extraProf = await rest(
+        `/rest/v1/profiles?user_id=eq.${extra.id}&select=id`
+    );
+    const extraProfileId = extraProf.json?.[0]?.id;
+    const over = await rest("/rest/v1/referrals", {
+        method: "POST",
+        body: JSON.stringify({
+            referrer_id: refrProfileId, referred_id: extraProfileId,
+            referrer_reward: 50, referred_reward: 25, status: "pending",
+        }),
+    });
+    assert(over.status >= 400, `11th referral rejected by velocity cap (got ${over.status})`);
+    assert(
+        String(over.json?.message || "").toLowerCase().includes("velocity"),
+        `velocity-cap error message (got ${JSON.stringify(over.json)})`
+    );
+
+    // --- E.6 Withdrawal cooldown enforced ---
+    const wu = await createUser("cooldown");
+    await rest("/rest/v1/cashback_transactions", {
+        method: "POST",
+        body: JSON.stringify({
+            user_id: wu.id, amount: 500, status: "confirmed",
+            network_type: "test", description: "cooldown seed",
+        }),
+    });
+    const auth = await signInUser(wu.email, wu.password);
+    const w1 = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 100, p_payment_method: "upi",
+            p_payment_details: { upi_id: "c@upi" },
+        }),
+    });
+    assert(w1.status === 200, `first withdrawal ok (got ${w1.status})`);
+    const w2 = await asUser(auth.access_token, "/rest/v1/rpc/create_withdrawal", {
+        method: "POST",
+        body: JSON.stringify({
+            p_amount: 100, p_payment_method: "upi",
+            p_payment_details: { upi_id: "c@upi" },
+        }),
+    });
+    assert(w2.status >= 400, `second withdrawal within cooldown rejected (got ${w2.status})`);
+    assert(
+        String(w2.json?.message || "").toLowerCase().includes("cooldown"),
+        `cooldown error message (got ${JSON.stringify(w2.json)})`
+    );
+    // Cleanup
+    await rest(`/rest/v1/withdrawals?user_id=eq.${wu.id}`, { method: "DELETE" });
+
+    // --- E.7 Admin audit log: UPDATE on cashback_transactions writes a row ---
+    const au = await createUser("audit");
+    const ins = await rest("/rest/v1/cashback_transactions", {
+        method: "POST", headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+            user_id: au.id, amount: 10, status: "pending",
+            network_type: "test", description: "audit seed",
+        }),
+    });
+    const txnId = ins.json?.[0]?.id;
+    await rest(`/rest/v1/cashback_transactions?id=eq.${txnId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "confirmed" }),
+    });
+    // Short delay so the trigger commit is visible
+    await new Promise((r) => setTimeout(r, 200));
+    const audit = await rest(
+        `/rest/v1/admin_audit_log?table_name=eq.cashback_transactions&row_pk=eq.${txnId}&select=id,action,old_data,new_data`
+    );
+    const rows = Array.isArray(audit.json) ? audit.json : [];
+    assert(rows.length >= 1, `audit row written for cashback UPDATE (got ${rows.length})`);
+    assert(rows.some((r) => r.action === "UPDATE"), `audit row action=UPDATE present`);
+}
+
 async function main() {
     try {
         await testPostbackFlow();
@@ -563,6 +768,7 @@ async function main() {
         await testSpinFlow();
         await testWithdrawalFlow();
         await testReferralFlow();
+        await testFraudHardening();
     } finally {
         console.log("\nCleaning up…");
         await cleanup();

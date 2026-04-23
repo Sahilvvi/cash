@@ -73,10 +73,14 @@ serve(async (req) => {
 
         console.log(`Processing conversion for session: ${sessionId}`)
 
-        // 1. Verify the session_id exists in affiliate_clicks
+        // 1. Verify the session_id exists in affiliate_clicks AND bind the
+        //    postback to the click's attributes. Even if POSTBACK_SECRET
+        //    leaks, an attacker still needs the original click's network
+        //    type, store id, AND session id AND for the click to be less
+        //    than 90 days old.
         const { data: clickData, error: clickError } = await supabaseClient
             .from('affiliate_clicks')
-            .select('user_id, store_id, network_type')
+            .select('user_id, store_id, network_type, clicked_at')
             .eq('session_id', sessionId)
             .single()
 
@@ -84,6 +88,46 @@ serve(async (req) => {
             console.error('Error finding click:', clickError)
             return new Response(
                 JSON.stringify({ error: 'Invalid session_id' }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+            )
+        }
+
+        // 1a. Reject stale clicks. 90 days matches the longest confirmation
+        //     window any affiliate network uses in practice.
+        const CLICK_MAX_AGE_DAYS = 90
+        const clickedAt = new Date(clickData.clicked_at as string)
+        const ageDays = (Date.now() - clickedAt.getTime()) / (1000 * 60 * 60 * 24)
+        if (Number.isFinite(ageDays) && ageDays > CLICK_MAX_AGE_DAYS) {
+            console.warn(`Rejected postback: click ${sessionId} is ${ageDays.toFixed(1)}d old`)
+            return new Response(
+                JSON.stringify({ error: 'Click expired (>90 days)' }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 410 }
+            )
+        }
+
+        // 1b. If the postback carries a network_type and/or store_id,
+        //     they must match what we stored at click time. Networks
+        //     always echo back their own network_type; store_id is
+        //     optional but validated when present.
+        if (params.network_type
+            && clickData.network_type
+            && String(params.network_type).toLowerCase()
+               !== String(clickData.network_type).toLowerCase()) {
+            console.warn(`Rejected postback: network_type mismatch ` +
+                `(click=${clickData.network_type}, postback=${params.network_type})`)
+            return new Response(
+                JSON.stringify({ error: 'Postback network_type does not match click' }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
+            )
+        }
+
+        if (params.store_id
+            && clickData.store_id
+            && String(params.store_id) !== String(clickData.store_id)) {
+            console.warn(`Rejected postback: store_id mismatch ` +
+                `(click=${clickData.store_id}, postback=${params.store_id})`)
+            return new Response(
+                JSON.stringify({ error: 'Postback store_id does not match click' }),
                 { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
             )
         }
