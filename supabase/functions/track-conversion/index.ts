@@ -55,7 +55,7 @@ serve(async (req) => {
         // 1. Verify the session_id exists in affiliate_clicks
         const { data: clickData, error: clickError } = await supabaseClient
             .from('affiliate_clicks')
-            .select('user_id, store_id')
+            .select('user_id, store_id, network_type')
             .eq('session_id', sessionId)
             .single()
 
@@ -67,7 +67,36 @@ serve(async (req) => {
             )
         }
 
-        // 2. Insert into cashback_transactions
+        // 2. Idempotency: if we have already recorded this conversion
+        // (same network_type + order_id), return the existing row instead
+        // of inserting a duplicate. Networks retry postbacks on network
+        // failures so this path is hit in normal operation.
+        // Fallback must match the DB default on `cashback_transactions.network_type`
+        // (set to 'generic_postback' in migration 20260417015000). If this
+        // differs, rows inserted by other code paths (e.g. fetch-conversions) or
+        // rows backfilled by the ALTER TABLE would get 'generic_postback' while
+        // our idempotency lookup would miss them with a different fallback,
+        // letting a second row slip in under the unique index.
+        const networkType = clickData.network_type || params.network_type || 'generic_postback'
+
+        if (order_id) {
+            const { data: existing } = await supabaseClient
+                .from('cashback_transactions')
+                .select('*')
+                .eq('network_type', networkType)
+                .eq('order_id', order_id)
+                .maybeSingle()
+
+            if (existing) {
+                console.log(`Duplicate postback ignored for ${networkType}/${order_id}`)
+                return new Response(
+                    JSON.stringify({ success: true, duplicate: true, transaction: existing }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+                )
+            }
+        }
+
+        // 3. Insert into cashback_transactions
         const transactionStatus = status || 'pending'
         // Default to a simple calculation if amount not provided, or take amount as is
         // This logic might need refinement based on exact network parameters (e.g. commission vs order value)
@@ -81,17 +110,35 @@ serve(async (req) => {
                 amount: cashbackAmount,
                 status: transactionStatus,
                 order_id: order_id,
+                network_type: networkType,
+                order_amount: params.order_amount ? parseFloat(params.order_amount) : null,
                 description: `Cashback for order ${order_id || 'N/A'}`,
             })
             .select()
+            .single()
 
         if (transactionError) {
+            // Handle race: another request inserted between our idempotency
+            // check and this insert. The unique index on (network_type,
+            // order_id) will raise 23505 — treat it as a duplicate.
+            if ((transactionError as { code?: string }).code === '23505') {
+                const { data: existing } = await supabaseClient
+                    .from('cashback_transactions')
+                    .select('*')
+                    .eq('network_type', networkType)
+                    .eq('order_id', order_id)
+                    .maybeSingle()
+                return new Response(
+                    JSON.stringify({ success: true, duplicate: true, transaction: existing }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+                )
+            }
             console.error('Error recording transaction:', transactionError)
             throw transactionError
         }
 
         return new Response(
-            JSON.stringify({ success: true, transaction: transactionData }),
+            JSON.stringify({ success: true, duplicate: false, transaction: transactionData }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
         )
 
