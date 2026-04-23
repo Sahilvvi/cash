@@ -34,6 +34,24 @@ serve(async (req) => {
 
         console.log('Received conversion tracking request:', params)
 
+        // Gate: if POSTBACK_SECRET is configured, reject any request whose
+        // `token` query param (or `X-Postback-Token` header) doesn't match.
+        // This prevents an attacker who guesses a user's session_id from
+        // forging a conversion. We keep the gate optional so the function
+        // remains backwards-compatible if the secret has not been set yet
+        // on a fresh environment.
+        const postbackSecret = Deno.env.get('POSTBACK_SECRET')
+        if (postbackSecret) {
+            const providedToken = params.token || req.headers.get('x-postback-token') || ''
+            if (providedToken !== postbackSecret) {
+                console.warn('Rejected postback: bad/missing token')
+                return new Response(
+                    JSON.stringify({ error: 'Unauthorized postback' }),
+                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
+                )
+            }
+        }
+
         // Support multiple parameter names for session_id
         // Different networks use different parameter names
         const sessionId = params.session_id ||

@@ -102,29 +102,24 @@ export const usePurchaseGiftCard = () => {
     mutationFn: async ({ giftCardId, amount }: { giftCardId: string; amount: number }) => {
       if (!user) throw new Error("Not authenticated");
 
-      // Generate a random code and pin
-      const code = `GC${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-      const pin = Math.random().toString().substring(2, 6);
+      // Server-side: validates balance, debits cashback, issues code+pin
+      // atomically. Client never writes to user_gift_cards directly.
+      // Cast avoids a stale-types issue until supabase types are regenerated.
+      const { data, error } = await (supabase.rpc as unknown as (
+        fn: string,
+        args: Record<string, unknown>
+      ) => Promise<{ data: unknown; error: { message: string } | null }>)(
+        "purchase_gift_card",
+        { p_gift_card_id: giftCardId, p_amount: amount }
+      );
 
-      const { data, error } = await supabase
-        .from("user_gift_cards")
-        .insert({
-          user_id: user.id,
-          gift_card_id: giftCardId,
-          amount,
-          code,
-          pin,
-          status: "active",
-          expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      if (error) throw new Error(error.message);
+      return data as UserGiftCard;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["user_gift_cards"] });
+      queryClient.invalidateQueries({ queryKey: ["cashback_transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["cashback_stats"] });
     },
   });
 };

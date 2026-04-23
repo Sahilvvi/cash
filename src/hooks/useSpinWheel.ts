@@ -119,45 +119,29 @@ export const useSpin = () => {
   const { user } = useAuth();
 
   return useMutation({
-    mutationFn: async (rewards: SpinReward[]) => {
+    mutationFn: async (_rewards?: SpinReward[]) => {
       if (!user) throw new Error("Not authenticated");
 
-      // Calculate weighted random selection
-      const totalProbability = rewards.reduce((sum, r) => sum + r.probability, 0);
-      let random = Math.random() * totalProbability;
-      
-      let selectedReward: SpinReward | null = null;
-      for (const reward of rewards) {
-        random -= reward.probability;
-        if (random <= 0) {
-          selectedReward = reward;
-          break;
-        }
-      }
+      // Server-side: enforces 24h cooldown, picks reward by weighted random,
+      // inserts user_spins, and credits cashback if the reward is cashback.
+      // The client argument is kept for backwards compatibility but ignored.
+      const { data, error } = await (supabase.rpc as unknown as (
+        fn: string,
+        args: Record<string, unknown>
+      ) => Promise<{ data: unknown; error: { message: string } | null }>)(
+        "spin_wheel",
+        {}
+      );
 
-      if (!selectedReward) {
-        selectedReward = rewards[rewards.length - 1];
-      }
-
-      const { data, error } = await supabase
-        .from("user_spins")
-        .insert({
-          user_id: user.id,
-          reward_id: selectedReward.id,
-          reward_value: selectedReward.reward_value,
-        })
-        .select(`
-          *,
-          reward:spin_rewards(*)
-        `)
-        .single();
-
-      if (error) throw error;
-      return data as UserSpin;
+      if (error) throw new Error(error.message);
+      const result = data as { spin: UserSpin; reward: SpinReward };
+      return { ...result.spin, reward: result.reward };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["user_spins"] });
       queryClient.invalidateQueries({ queryKey: ["can_spin"] });
+      queryClient.invalidateQueries({ queryKey: ["cashback_transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["cashback_stats"] });
     },
   });
 };
