@@ -46,6 +46,7 @@ import {
 import AdminWithdrawals from "@/components/admin/AdminWithdrawals";
 import AdminTracking from "@/components/admin/AdminTracking";
 import { AdminOffer18 } from "@/components/admin/AdminOffer18";
+import AdminDashboardWidgets from "@/components/admin/AdminDashboardWidgets";
 import ImageUpload from "@/components/admin/ImageUpload";
 import CategoryDetailView from "@/components/admin/CategoryDetailView";
 
@@ -757,6 +758,11 @@ const AdminPage = () => {
                 <p className="text-3xl font-bold">{stats?.spins || 0}</p>
                 <p className="text-muted-foreground">Spins</p>
               </div>
+            </div>
+
+            {/* Cashback / postback live widgets */}
+            <div className="mb-8">
+              <AdminDashboardWidgets />
             </div>
 
             {/* Quick Charts */}
