@@ -903,7 +903,7 @@ async function testCashbackStateMachine() {
         }),
     });
     assert(raceClick.status === 201, `race seed click → 201 (got ${raceClick.status})`);
-    const raceSession = raceClick.json[0].session_id;
+    const raceSession = raceClick.json?.[0]?.session_id;
     const raceOrder = `RACE-${Date.now()}`;
 
     const raceFire = () => fetch(
@@ -934,6 +934,114 @@ async function testCashbackStateMachine() {
         `concurrent: exactly 1 row in DB after 8 parallel postbacks (got ${raceRows.json?.length})`);
 }
 
+// G. Failed-postback log (postback_errors) ----------------------------------
+//   Every 4xx/5xx response from track-conversion should land in
+//   public.postback_errors with the right `reason` and the secret stripped
+//   from the stored query. The Admin Dashboard reads this table to surface
+//   misconfigured / hostile postbacks.
+async function testPostbackErrorLog() {
+    console.log("\n=== Postback error log ===");
+
+    const beforeCount = async () => {
+        const r = await rest(
+            `/rest/v1/postback_errors?select=id&occurred_at=gte.${encodeURIComponent(
+                new Date(Date.now() - 5 * 60_000).toISOString()
+            )}`
+        );
+        return Array.isArray(r.json) ? r.json.length : 0;
+    };
+
+    // G.1 Bad-token postback → 401 → row logged with reason=bad_token.
+    if (POSTBACK_SECRET) {
+        const probeOrder = `BADTOK-${Date.now()}`;
+        const before = await beforeCount();
+        const r = await fetch(
+            `${SUPABASE_URL}/functions/v1/track-conversion` +
+            `?session_id=any&amount=1&order_id=${probeOrder}&status=pending&token=this-is-wrong`,
+            { headers: HEADERS_ADMIN }
+        );
+        assert(r.status === 401, `bad token → 401 (got ${r.status})`);
+
+        await new Promise((res) => setTimeout(res, 600));
+        const after = await rest(
+            `/rest/v1/postback_errors?order_id=eq.${probeOrder}&select=reason,status_code,query,order_id`
+        );
+        assert(Array.isArray(after.json) && after.json.length >= 1,
+            `bad-token: postback_errors row created (got ${after.json?.length})`);
+        const row = after.json?.[0];
+        assert(row?.reason === "bad_token",
+            `bad-token: reason=bad_token (got ${row?.reason})`);
+        assert(row?.status_code === 401,
+            `bad-token: status_code=401 (got ${row?.status_code})`);
+        assert(typeof row?.query === "string" && /token=\*\*\*/.test(row.query),
+            `bad-token: query column has token=*** redaction (got ${row?.query})`);
+        assert(typeof row?.query === "string" && !row.query.includes(POSTBACK_SECRET),
+            `bad-token: secret value never stored in query`);
+        const _ = before;  // satisfy lint without needing baseline math
+    } else {
+        console.log("  (skipping bad-token test — POSTBACK_SECRET not set)");
+    }
+
+    // G.2 Missing session_id → 400 → row logged with reason=missing_session.
+    {
+        const tokenQS = POSTBACK_SECRET ? `&token=${encodeURIComponent(POSTBACK_SECRET)}` : "";
+        const probeOrder = `NOSESS-${Date.now()}`;
+        const r = await fetch(
+            `${SUPABASE_URL}/functions/v1/track-conversion?amount=1&order_id=${probeOrder}${tokenQS}`,
+            { headers: HEADERS_ADMIN }
+        );
+        assert(r.status === 400, `missing session → 400 (got ${r.status})`);
+
+        await new Promise((res) => setTimeout(res, 600));
+        const after = await rest(
+            `/rest/v1/postback_errors?order_id=eq.${probeOrder}&select=reason,status_code`
+        );
+        assert(Array.isArray(after.json) && after.json.length >= 1,
+            `missing-session: postback_errors row created`);
+        assert(after.json?.[0]?.reason === "missing_session",
+            `missing-session: reason=missing_session (got ${after.json?.[0]?.reason})`);
+    }
+
+    // G.3 Bad session_id → 400 → row logged with reason=invalid_session.
+    {
+        const tokenQS = POSTBACK_SECRET ? `&token=${encodeURIComponent(POSTBACK_SECRET)}` : "";
+        const probeOrder = `BADSESS-${Date.now()}`;
+        const fakeSession = `00000000-0000-0000-0000-000000000000`;
+        const r = await fetch(
+            `${SUPABASE_URL}/functions/v1/track-conversion` +
+            `?session_id=${fakeSession}&amount=1&order_id=${probeOrder}&status=pending${tokenQS}`,
+            { headers: HEADERS_ADMIN }
+        );
+        assert(r.status === 400, `bad session → 400 (got ${r.status})`);
+
+        await new Promise((res) => setTimeout(res, 600));
+        const after = await rest(
+            `/rest/v1/postback_errors?order_id=eq.${probeOrder}&select=reason,session_id`
+        );
+        assert(Array.isArray(after.json) && after.json.length >= 1,
+            `invalid-session: postback_errors row created`);
+        assert(after.json?.[0]?.reason === "invalid_session",
+            `invalid-session: reason=invalid_session (got ${after.json?.[0]?.reason})`);
+        assert(after.json?.[0]?.session_id === fakeSession,
+            `invalid-session: session_id captured`);
+    }
+
+    // G.4 Dashboard view exists and returns one row with the expected shape.
+    {
+        const v = await rest(
+            `/rest/v1/admin_dashboard_metrics?select=clicks_today,conversions_today,errors_24h,pending_amount,confirmed_amount`
+        );
+        assert(v.status === 200, `dashboard view → 200 (got ${v.status})`);
+        assert(Array.isArray(v.json) && v.json.length === 1,
+            `dashboard view: single-row aggregation (got ${v.json?.length})`);
+        const m = v.json?.[0];
+        assert(typeof m?.clicks_today === "number",
+            `dashboard view: clicks_today is numeric (got ${typeof m?.clicks_today})`);
+        assert(typeof m?.errors_24h === "number" && m.errors_24h >= 1,
+            `dashboard view: errors_24h reflects logged failures (got ${m?.errors_24h})`);
+    }
+}
+
 async function main() {
     try {
         await testPostbackFlow();
@@ -943,6 +1051,7 @@ async function main() {
         await testReferralFlow();
         await testFraudHardening();
         await testCashbackStateMachine();
+        await testPostbackErrorLog();
     } finally {
         console.log("\nCleaning up…");
         await cleanup();

@@ -13,25 +13,73 @@ serve(async (req) => {
         return new Response(null, { headers: corsHeaders })
     }
 
-    try {
-        const supabaseClient = createClient(
-            // Supabase API URL - env var automatically populated by Supabase
-            Deno.env.get('SUPABASE_URL') ?? '',
-            // Supabase Service Role Key - env var automatically populated by Supabase
-            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-        )
+    const supabaseClient = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    )
 
-        // Get request data (support both GET and POST)
-        let params: any = {}
+    // Capture caller metadata once so we can attach it to any error log.
+    const ip = (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || null
+    const userAgent = req.headers.get('user-agent') ?? null
+
+    // Parse params up-front so the failure path can include them in the
+    // postback_errors row even if processing aborts early.
+    let params: Record<string, string> = {}
+    let rawQuery: string | null = null
+    try {
         if (req.method === 'GET') {
             const url = new URL(req.url)
-            url.searchParams.forEach((value, key) => {
-                params[key] = value
-            })
+            rawQuery = url.search ? url.search.slice(0, 1024) : null
+            url.searchParams.forEach((value, key) => { params[key] = value })
         } else {
-            params = await req.json()
+            const body = await req.json()
+            params = body || {}
         }
+    } catch {
+        // Body wasn't valid JSON; keep params empty so we still log the failure.
+    }
 
+    // Helpers ---------------------------------------------------------------
+    const logError = async (
+        statusCode: number,
+        reason: string,
+        message: string
+    ) => {
+        try {
+            // Strip the secret token from the stored query before persisting.
+            const sanitisedQuery = rawQuery
+                ? rawQuery.replace(/([?&])token=[^&]*/gi, '$1token=***')
+                : null
+            await supabaseClient.from('postback_errors').insert({
+                status_code: statusCode,
+                reason,
+                message: message?.slice(0, 1024) ?? null,
+                query: sanitisedQuery,
+                session_id: params.session_id ?? params.subid ?? params.click_id ?? null,
+                order_id:   params.order_id ?? null,
+                network:    params.network_type ?? null,
+                ip,
+                user_agent: userAgent,
+            })
+        } catch (logErr) {
+            // Never let the audit log break the postback path.
+            console.error('postback_errors insert failed:', logErr)
+        }
+    }
+
+    const failJson = async (
+        statusCode: number,
+        reason: string,
+        message: string
+    ) => {
+        await logError(statusCode, reason, message)
+        return new Response(
+            JSON.stringify({ error: message }),
+            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: statusCode }
+        )
+    }
+
+    try {
         // Strip `token` from logged params — it carries POSTBACK_SECRET and
         // must never end up in the edge function logs.
         const { token: _loggedToken, ...loggableParams } = params
@@ -39,24 +87,16 @@ serve(async (req) => {
 
         // Gate: if POSTBACK_SECRET is configured, reject any request whose
         // `token` query param (or `X-Postback-Token` header) doesn't match.
-        // This prevents an attacker who guesses a user's session_id from
-        // forging a conversion. We keep the gate optional so the function
-        // remains backwards-compatible if the secret has not been set yet
-        // on a fresh environment.
         const postbackSecret = Deno.env.get('POSTBACK_SECRET')
         if (postbackSecret) {
             const providedToken = params.token || req.headers.get('x-postback-token') || ''
             if (providedToken !== postbackSecret) {
                 console.warn('Rejected postback: bad/missing token')
-                return new Response(
-                    JSON.stringify({ error: 'Unauthorized postback' }),
-                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 401 }
-                )
+                return await failJson(401, 'bad_token', 'Unauthorized postback')
             }
         }
 
         // Support multiple parameter names for session_id
-        // Different networks use different parameter names
         const sessionId = params.session_id ||
             params.subid ||
             params.linkId ||  // Amazon
@@ -68,16 +108,13 @@ serve(async (req) => {
 
         if (!sessionId) {
             console.error('Missing session identifier in params:', Object.keys(params))
-            throw new Error('Missing session_id or equivalent tracking parameter')
+            return await failJson(400, 'missing_session', 'Missing session_id or equivalent tracking parameter')
         }
 
         console.log(`Processing conversion for session: ${sessionId}`)
 
         // 1. Verify the session_id exists in affiliate_clicks AND bind the
-        //    postback to the click's attributes. Even if POSTBACK_SECRET
-        //    leaks, an attacker still needs the original click's network
-        //    type, store id, AND session id AND for the click to be less
-        //    than 90 days old.
+        //    postback to the click's attributes.
         const { data: clickData, error: clickError } = await supabaseClient
             .from('affiliate_clicks')
             .select('user_id, store_id, network_type, clicked_at')
@@ -86,39 +123,26 @@ serve(async (req) => {
 
         if (clickError || !clickData) {
             console.error('Error finding click:', clickError)
-            return new Response(
-                JSON.stringify({ error: 'Invalid session_id' }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-            )
+            return await failJson(400, 'invalid_session', 'Invalid session_id')
         }
 
-        // 1a. Reject stale clicks. 90 days matches the longest confirmation
-        //     window any affiliate network uses in practice.
+        // 1a. Reject stale clicks.
         const CLICK_MAX_AGE_DAYS = 90
         const clickedAt = new Date(clickData.clicked_at as string)
         const ageDays = (Date.now() - clickedAt.getTime()) / (1000 * 60 * 60 * 24)
         if (Number.isFinite(ageDays) && ageDays > CLICK_MAX_AGE_DAYS) {
             console.warn(`Rejected postback: click ${sessionId} is ${ageDays.toFixed(1)}d old`)
-            return new Response(
-                JSON.stringify({ error: 'Click expired (>90 days)' }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 410 }
-            )
+            return await failJson(410, 'click_expired', 'Click expired (>90 days)')
         }
 
-        // 1b. If the postback carries a network_type and/or store_id,
-        //     they must match what we stored at click time. Networks
-        //     always echo back their own network_type; store_id is
-        //     optional but validated when present.
+        // 1b. Network/store binding.
         if (params.network_type
             && clickData.network_type
             && String(params.network_type).toLowerCase()
                !== String(clickData.network_type).toLowerCase()) {
             console.warn(`Rejected postback: network_type mismatch ` +
                 `(click=${clickData.network_type}, postback=${params.network_type})`)
-            return new Response(
-                JSON.stringify({ error: 'Postback network_type does not match click' }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-            )
+            return await failJson(400, 'network_mismatch', 'Postback network_type does not match click')
         }
 
         if (params.store_id
@@ -126,19 +150,10 @@ serve(async (req) => {
             && String(params.store_id) !== String(clickData.store_id)) {
             console.warn(`Rejected postback: store_id mismatch ` +
                 `(click=${clickData.store_id}, postback=${params.store_id})`)
-            return new Response(
-                JSON.stringify({ error: 'Postback store_id does not match click' }),
-                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-            )
+            return await failJson(400, 'store_mismatch', 'Postback store_id does not match click')
         }
 
-        // 2. Hand off to the state-machine RPC. apply_postback_state
-        //    inserts a new row when (network_type, order_id) is novel,
-        //    moves the row forward through pending → approved →
-        //    confirmed (or to reversed) on subsequent postbacks, and
-        //    returns a noop when the same status is replayed. The same
-        //    RPC is reused by the reconciliation job so live postbacks
-        //    and the nightly diff agree on transition rules.
+        // 2. Hand off to the state-machine RPC.
         const networkType = clickData.network_type || params.network_type || 'generic_postback'
         const transactionStatus = status || 'pending'
         const cashbackAmount = parseFloat(amount) || 0
@@ -160,6 +175,7 @@ serve(async (req) => {
 
         if (rpcError) {
             console.error('apply_postback_state failed:', rpcError)
+            await logError(500, 'rpc_error', rpcError.message ?? 'apply_postback_state failed')
             throw rpcError
         }
 
@@ -168,8 +184,7 @@ serve(async (req) => {
         const finalStatus = rpcResult?.final_status ?? transactionStatus
         const transactionId = rpcResult?.transaction_id
 
-        // Re-fetch the row so the caller (network or admin) sees the
-        // canonical state, not just our request payload.
+        // Re-fetch the row so the caller sees the canonical state.
         const { data: transactionData } = await supabaseClient
             .from('cashback_transactions')
             .select('*')
@@ -189,9 +204,6 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('Error:', error)
-        return new Response(
-            JSON.stringify({ error: error.message }),
-            { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400 }
-        )
+        return await failJson(400, 'unhandled', error.message ?? 'Unhandled error')
     }
 })
