@@ -1,6 +1,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
+import { reportToSentry } from '../_shared/sentry.ts'
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -175,8 +176,9 @@ serve(async (req) => {
 
         if (rpcError) {
             console.error('apply_postback_state failed:', rpcError)
-            await logError(500, 'rpc_error', rpcError.message ?? 'apply_postback_state failed')
-            throw rpcError
+            // Return directly so the outer try/catch doesn't re-log this
+            // as `unhandled` and clobber the 500 status with a 400.
+            return await failJson(500, 'rpc_error', rpcError.message ?? 'apply_postback_state failed')
         }
 
         const rpcResult = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows
@@ -204,6 +206,14 @@ serve(async (req) => {
 
     } catch (error) {
         console.error('Error:', error)
-        return await failJson(400, 'unhandled', error.message ?? 'Unhandled error')
+        await reportToSentry(error, {
+            fn: 'track-conversion',
+            ctx: {
+                session_id: params.session_id ?? params.subid ?? params.click_id ?? null,
+                order_id: params.order_id ?? null,
+                network: params.network_type ?? null,
+            },
+        })
+        return await failJson(400, 'unhandled', (error as Error)?.message ?? 'Unhandled error')
     }
 })
