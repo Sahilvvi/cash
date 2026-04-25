@@ -367,10 +367,12 @@ async function runServerSideSync(args: {
         );
     }
 
+    // Mirror src/services/offer18Service.ts#fetchActiveOffers exactly:
+    // require status === "active". Offers with missing/empty status are
+    // NOT promoted to active — that would be more permissive than the
+    // manual admin-button sync.
     const offers = Object.values(parsed?.data ?? {});
-    const activeOffers = offers.filter(
-        (o) => !o.status || o.status === "active",
-    );
+    const activeOffers = offers.filter((o) => o.status === "active");
 
     // Map -> dedupe by slug -> batch upsert. Same shape as the client.
     const rows: Record<string, unknown>[] = [];
