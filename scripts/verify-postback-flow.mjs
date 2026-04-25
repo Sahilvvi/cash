@@ -781,6 +781,113 @@ async function testFraudHardening() {
     );
 }
 
+// --------------- Section F: cashback state machine ---------------
+async function testCashbackStateMachine() {
+    console.log("\n=== F. Cashback state machine ===");
+
+    const user = await createUser("statemachine");
+    console.log(`  created user ${user.email}`);
+
+    const stores = await rest("/rest/v1/stores?select=id&is_active=eq.true&limit=1");
+    const storeId = stores.json?.[0]?.id;
+    if (!storeId) {
+        assert(false, "no active stores in DB to anchor affiliate_clicks");
+        return;
+    }
+
+    const sessionId = randomUUID();
+    const orderId = `STATE-${Date.now()}`;
+
+    const click = await rest("/rest/v1/affiliate_clicks", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+            user_id: user.id, store_id: storeId,
+            session_id: sessionId, network_type: "offer18",
+        }),
+    });
+    assert(click.status === 201, `seed affiliate_clicks → 201 (got ${click.status})`);
+
+    const tokenQS = POSTBACK_SECRET ? `&token=${encodeURIComponent(POSTBACK_SECRET)}` : "";
+    const fire = (status) => fetch(
+        `${SUPABASE_URL}/functions/v1/track-conversion` +
+        `?session_id=${sessionId}&amount=100&order_id=${orderId}` +
+        `&status=${status}${tokenQS}`,
+        { headers: HEADERS_ADMIN }
+    ).then((r) => r.json());
+
+    // F.1 First postback inserts as pending
+    const r1 = await fire("pending");
+    assert(r1?.action === "inserted", `pending insert → action=inserted (got ${r1?.action})`);
+    assert(r1?.status === "pending", `pending insert → status=pending`);
+
+    // F.2 Replay same status is a noop
+    const r1dup = await fire("pending");
+    assert(r1dup?.action === "noop", `replay pending → action=noop (got ${r1dup?.action})`);
+    assert(r1dup?.duplicate === true, `replay pending duplicate=true`);
+
+    // F.3 pending → approved transitions
+    const r2 = await fire("approved");
+    assert(r2?.action === "transitioned", `approved → action=transitioned (got ${r2?.action})`);
+    assert(r2?.status === "approved", `approved → status=approved`);
+
+    // F.4 approved → confirmed transitions and stamps confirmed_at
+    const r3 = await fire("confirmed");
+    assert(r3?.action === "transitioned", `confirmed → action=transitioned (got ${r3?.action})`);
+    assert(r3?.status === "confirmed", `confirmed → status=confirmed`);
+    assert(!!r3?.transaction?.confirmed_at, `confirmed_at stamped`);
+
+    // F.5 Backward (confirmed → pending) is rejected without erroring
+    const r4 = await fire("pending");
+    assert(r4?.action === "rejected_backward", `confirmed → pending rejected (got ${r4?.action})`);
+    assert(r4?.status === "confirmed", `still confirmed after rejected backward`);
+
+    // F.6 confirmed → reversed always allowed (chargeback)
+    const r5 = await fire("reversed");
+    assert(r5?.action === "transitioned", `confirmed → reversed (got ${r5?.action})`);
+    assert(r5?.status === "reversed", `final status reversed`);
+
+    // F.7 Exactly one row throughout
+    const rows = await rest(
+        `/rest/v1/cashback_transactions?user_id=eq.${user.id}&order_id=eq.${orderId}&select=id,status`
+    );
+    assert(Array.isArray(rows.json) && rows.json.length === 1,
+        `exactly 1 row for (network, order) after 5 postbacks (got ${rows.json?.length})`);
+    assert(rows.json?.[0]?.status === "reversed",
+        `single row final status=reversed (got ${rows.json?.[0]?.status})`);
+
+    // F.8 Status CHECK constraint blocks bogus values from direct inserts
+    const bogus = await rest("/rest/v1/cashback_transactions", {
+        method: "POST",
+        body: JSON.stringify({
+            user_id: user.id, store_id: storeId, amount: 1,
+            status: "weird", network_type: "test",
+            description: "should fail",
+        }),
+    });
+    assert(bogus.status >= 400, `bogus status rejected by CHECK (got ${bogus.status})`);
+
+    // F.9 Reconcile endpoint exists and is callable end-to-end. With no
+    //     OFFER18_API_KEY configured it should short-circuit with
+    //     skipped:true, never crash. We only assert reachability +
+    //     graceful behaviour, since the real API call requires live
+    //     credentials.
+    const recon = await fetch(
+        `${SUPABASE_URL}/functions/v1/reconcile-conversions`,
+        {
+            method: "POST",
+            headers: HEADERS_ADMIN,
+            body: JSON.stringify({ days: 1 }),
+        }
+    );
+    assert(recon.status === 200, `reconcile-conversions reachable → 200 (got ${recon.status})`);
+    const reconJson = await recon.json();
+    assert(typeof reconJson === "object" && reconJson !== null,
+        `reconcile returned JSON object`);
+    assert(reconJson.success === true,
+        `reconcile success=true (got ${JSON.stringify(reconJson)})`);
+}
+
 async function main() {
     try {
         await testPostbackFlow();
@@ -789,6 +896,7 @@ async function main() {
         await testWithdrawalFlow();
         await testReferralFlow();
         await testFraudHardening();
+        await testCashbackStateMachine();
     } finally {
         console.log("\nCleaning up…");
         await cleanup();
