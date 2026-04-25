@@ -132,78 +132,58 @@ serve(async (req) => {
             )
         }
 
-        // 2. Idempotency: if we have already recorded this conversion
-        // (same network_type + order_id), return the existing row instead
-        // of inserting a duplicate. Networks retry postbacks on network
-        // failures so this path is hit in normal operation.
-        // Fallback must match the DB default on `cashback_transactions.network_type`
-        // (set to 'generic_postback' in migration 20260417015000). If this
-        // differs, rows inserted by other code paths (e.g. fetch-conversions) or
-        // rows backfilled by the ALTER TABLE would get 'generic_postback' while
-        // our idempotency lookup would miss them with a different fallback,
-        // letting a second row slip in under the unique index.
+        // 2. Hand off to the state-machine RPC. apply_postback_state
+        //    inserts a new row when (network_type, order_id) is novel,
+        //    moves the row forward through pending → approved →
+        //    confirmed (or to reversed) on subsequent postbacks, and
+        //    returns a noop when the same status is replayed. The same
+        //    RPC is reused by the reconciliation job so live postbacks
+        //    and the nightly diff agree on transition rules.
         const networkType = clickData.network_type || params.network_type || 'generic_postback'
-
-        if (order_id) {
-            const { data: existing } = await supabaseClient
-                .from('cashback_transactions')
-                .select('*')
-                .eq('network_type', networkType)
-                .eq('order_id', order_id)
-                .maybeSingle()
-
-            if (existing) {
-                console.log(`Duplicate postback ignored for ${networkType}/${order_id}`)
-                return new Response(
-                    JSON.stringify({ success: true, duplicate: true, transaction: existing }),
-                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-                )
-            }
-        }
-
-        // 3. Insert into cashback_transactions
         const transactionStatus = status || 'pending'
-        // Default to a simple calculation if amount not provided, or take amount as is
-        // This logic might need refinement based on exact network parameters (e.g. commission vs order value)
         const cashbackAmount = parseFloat(amount) || 0
+        const orderAmount = params.order_amount ? parseFloat(params.order_amount) : null
 
-        const { data: transactionData, error: transactionError } = await supabaseClient
-            .from('cashback_transactions')
-            .insert({
-                user_id: clickData.user_id,
-                store_id: clickData.store_id,
-                amount: cashbackAmount,
-                status: transactionStatus,
-                order_id: order_id,
-                network_type: networkType,
-                order_amount: params.order_amount ? parseFloat(params.order_amount) : null,
-                description: `Cashback for order ${order_id || 'N/A'}`,
-            })
-            .select()
-            .single()
-
-        if (transactionError) {
-            // Handle race: another request inserted between our idempotency
-            // check and this insert. The unique index on (network_type,
-            // order_id) will raise 23505 — treat it as a duplicate.
-            if ((transactionError as { code?: string }).code === '23505') {
-                const { data: existing } = await supabaseClient
-                    .from('cashback_transactions')
-                    .select('*')
-                    .eq('network_type', networkType)
-                    .eq('order_id', order_id)
-                    .maybeSingle()
-                return new Response(
-                    JSON.stringify({ success: true, duplicate: true, transaction: existing }),
-                    { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
-                )
+        const { data: rpcRows, error: rpcError } = await supabaseClient.rpc(
+            'apply_postback_state',
+            {
+                p_user_id:      clickData.user_id,
+                p_store_id:     clickData.store_id,
+                p_amount:       cashbackAmount,
+                p_order_id:     order_id ?? null,
+                p_network_type: networkType,
+                p_status:       transactionStatus,
+                p_order_amount: orderAmount,
+                p_description:  `Cashback for order ${order_id || 'N/A'}`,
             }
-            console.error('Error recording transaction:', transactionError)
-            throw transactionError
+        )
+
+        if (rpcError) {
+            console.error('apply_postback_state failed:', rpcError)
+            throw rpcError
         }
+
+        const rpcResult = Array.isArray(rpcRows) ? rpcRows[0] : rpcRows
+        const action = rpcResult?.action ?? 'unknown'
+        const finalStatus = rpcResult?.final_status ?? transactionStatus
+        const transactionId = rpcResult?.transaction_id
+
+        // Re-fetch the row so the caller (network or admin) sees the
+        // canonical state, not just our request payload.
+        const { data: transactionData } = await supabaseClient
+            .from('cashback_transactions')
+            .select('*')
+            .eq('id', transactionId)
+            .maybeSingle()
 
         return new Response(
-            JSON.stringify({ success: true, duplicate: false, transaction: transactionData }),
+            JSON.stringify({
+                success: true,
+                duplicate: action === 'noop',
+                action,
+                status: finalStatus,
+                transaction: transactionData,
+            }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
         )
 
