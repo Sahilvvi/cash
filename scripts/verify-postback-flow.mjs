@@ -886,6 +886,52 @@ async function testCashbackStateMachine() {
         `reconcile returned JSON object`);
     assert(reconJson.success === true,
         `reconcile success=true (got ${JSON.stringify(reconJson)})`);
+
+    // F.10 Concurrent insert race: when N postbacks for the same
+    //     (network_type, order_id) hit the RPC in parallel, exactly one
+    //     should land as 'inserted' and the rest must be either 'noop'
+    //     or 'transitioned' — never a 23505 / 5xx leaking out. This
+    //     exercises the BEGIN…EXCEPTION WHEN unique_violation guard in
+    //     apply_postback_state.
+    const raceUser = await createUser("statemachine-race");
+    const raceClick = await rest("/rest/v1/affiliate_clicks", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+            user_id: raceUser.id, store_id: storeId,
+            session_id: randomUUID(), network_type: "offer18",
+        }),
+    });
+    assert(raceClick.status === 201, `race seed click → 201 (got ${raceClick.status})`);
+    const raceSession = raceClick.json[0].session_id;
+    const raceOrder = `RACE-${Date.now()}`;
+
+    const raceFire = () => fetch(
+        `${SUPABASE_URL}/functions/v1/track-conversion` +
+        `?session_id=${raceSession}&amount=99&order_id=${raceOrder}` +
+        `&status=pending${tokenQS}`,
+        { headers: HEADERS_ADMIN }
+    ).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+    const raceResults = await Promise.all(
+        Array.from({ length: 8 }, () => raceFire())
+    );
+    const raceStatuses = raceResults.map((r) => r.status);
+    const raceActions = raceResults.map((r) => r.body?.action);
+    assert(raceStatuses.every((s) => s === 200),
+        `concurrent: all 8 postbacks → 200 (got ${JSON.stringify(raceStatuses)})`);
+    const inserted = raceActions.filter((a) => a === "inserted").length;
+    const noop = raceActions.filter((a) => a === "noop").length;
+    assert(inserted === 1,
+        `concurrent: exactly 1 'inserted' action (got ${inserted}, all=${JSON.stringify(raceActions)})`);
+    assert(inserted + noop === 8,
+        `concurrent: rest are 'noop' (inserted=${inserted}, noop=${noop})`);
+
+    const raceRows = await rest(
+        `/rest/v1/cashback_transactions?user_id=eq.${raceUser.id}&order_id=eq.${raceOrder}&select=id`
+    );
+    assert(Array.isArray(raceRows.json) && raceRows.json.length === 1,
+        `concurrent: exactly 1 row in DB after 8 parallel postbacks (got ${raceRows.json?.length})`);
 }
 
 async function main() {
