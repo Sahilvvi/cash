@@ -1042,6 +1042,43 @@ async function testPostbackErrorLog() {
     }
 }
 
+// H. /health endpoint + scheduled jobs --------------------------------------
+//   The /health probe is what uptime monitors / Vercel will hit. The
+//   scheduled jobs are what keep Offer18 data fresh and reconcile missed
+//   postbacks. Both should be reachable + return the expected shape.
+async function testHealthAndSchedules() {
+    console.log("\n=== /health + scheduled jobs ===");
+
+    const h = await fetch(`${SUPABASE_URL}/functions/v1/health`, {
+        headers: HEADERS_ADMIN,
+    });
+    const hBody = await h.json().catch(() => ({}));
+    assert(h.status === 200, `/health → 200 (got ${h.status})`);
+    assert(hBody?.status === "ok",
+        `/health: status=ok (got ${hBody?.status})`);
+    assert(hBody?.checks?.database?.ok === true,
+        `/health: database check ok (got ${JSON.stringify(hBody?.checks?.database)})`);
+    assert(typeof hBody?.checks?.database?.ms === "number",
+        `/health: database check has latency ms`);
+    assert(typeof hBody?.timestamp === "string",
+        `/health: returns ISO timestamp`);
+
+    // Scheduled jobs view: the migration registers two cron jobs.
+    const sj = await rest(
+        `/rest/v1/admin_scheduled_jobs?select=name,cron,active`
+    );
+    assert(sj.status === 200, `admin_scheduled_jobs → 200 (got ${sj.status})`);
+    assert(Array.isArray(sj.json) && sj.json.length === 2,
+        `admin_scheduled_jobs: 2 rows (got ${sj.json?.length})`);
+    const names = (sj.json ?? []).map((r) => r.name).sort();
+    assert(names[0] === "nightly_offer18_sync",
+        `admin_scheduled_jobs: nightly_offer18_sync registered (got ${names[0]})`);
+    assert(names[1] === "nightly_reconcile",
+        `admin_scheduled_jobs: nightly_reconcile registered (got ${names[1]})`);
+    assert((sj.json ?? []).every((r) => r.active === true),
+        `admin_scheduled_jobs: both jobs are active`);
+}
+
 async function main() {
     try {
         await testPostbackFlow();
@@ -1052,6 +1089,7 @@ async function main() {
         await testFraudHardening();
         await testCashbackStateMachine();
         await testPostbackErrorLog();
+        await testHealthAndSchedules();
     } finally {
         console.log("\nCleaning up…");
         await cleanup();

@@ -24,6 +24,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.7.1";
+import { reportToSentry } from '../_shared/sentry.ts';
 
 const corsHeaders = {
     "Access-Control-Allow-Origin": "*",
@@ -193,6 +194,7 @@ serve(async (req: Request) => {
         return json(parsed as JsonResponse, upstream.ok ? 200 : upstream.status);
     } catch (err) {
         console.error("offer18-proxy unexpected error:", err);
+        await reportToSentry(err, { fn: 'offer18-proxy' });
         return json({ error: (err as Error).message ?? "Unknown error" }, 500);
     }
 });
