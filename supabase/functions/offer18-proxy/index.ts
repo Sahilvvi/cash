@@ -57,6 +57,23 @@ function json(body: JsonResponse, status = 200): Response {
     });
 }
 
+// Decode a JWT's payload without verifying the signature.
+// Used to inspect the `role` claim of an already-gateway-verified
+// service-role token; do NOT use this to authenticate untrusted tokens.
+function decodeJwtRole(token: string): string | null {
+    try {
+        const parts = token.split(".");
+        if (parts.length !== 3) return null;
+        const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+        const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
+        const decoded = atob(padded);
+        const obj = JSON.parse(decoded) as { role?: string };
+        return typeof obj?.role === "string" ? obj.role : null;
+    } catch {
+        return null;
+    }
+}
+
 serve(async (req: Request) => {
     if (req.method === "OPTIONS") {
         return new Response(null, { headers: corsHeaders });
@@ -73,39 +90,63 @@ serve(async (req: Request) => {
         const OFFER18_MERCHANT_ID = Deno.env.get("OFFER18_MERCHANT_ID") ?? "";
 
         const url = new URL(req.url);
-        const isStatus = url.searchParams.get("action") === "status";
+        const action = url.searchParams.get("action");
+        const isStatus = action === "status";
+        const isSync = action === "sync";
 
-        // --- Auth: caller must be an admin --------------------------------
+        // --- Auth: caller must be an admin (or the service-role key) -------
         // Note: we intentionally run the auth check BEFORE the status probe
         // so we don't leak affiliate/merchant IDs to unauthenticated callers.
+        //
+        // Two valid auth modes:
+        //   1. User JWT for an admin in `admin_users` (interactive admin UI).
+        //   2. The Supabase service-role key directly (used by pg_cron from
+        //      run_nightly_offer18_sync — see the scheduled-jobs migration).
+        //      We never have a "user" for cron, so getUser() would always
+        //      401 here without this branch.
         const authHeader = req.headers.get("Authorization") ?? "";
         if (!authHeader.toLowerCase().startsWith("bearer ")) {
             return json({ error: "Missing Authorization header" }, 401);
         }
         const jwt = authHeader.slice("bearer ".length).trim();
 
-        // Pass the JWT explicitly to getUser(). Otherwise supabase-js looks at
-        // its own (empty) stored session and the auth check silently fails
-        // regardless of the Authorization header. This is the pattern that
-        // works for ES256 access tokens too.
-        const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        const { data: userData, error: userErr } = await authClient.auth.getUser(jwt);
-        if (userErr || !userData?.user) {
-            return json({ error: "Invalid or expired session" }, 401);
-        }
-
         const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-        const { data: adminRow, error: adminErr } = await adminClient
-            .from("admin_users")
-            .select("id")
-            .eq("user_id", userData.user.id)
-            .maybeSingle();
-        if (adminErr) {
-            console.error("admin_users lookup failed:", adminErr);
-            return json({ error: "Authorization check failed" }, 500);
-        }
-        if (!adminRow) {
-            return json({ error: "Admin access required" }, 403);
+
+        // Cron jobs (and other server-side callers) hit us with the
+        // service-role JWT. We deliberately don't compare strings —
+        // SUPABASE_SERVICE_ROLE_KEY in the function's env can be a
+        // legacy JWT or a new sb_secret_… token, and either way the
+        // safe contract is "this token has role=service_role and was
+        // signed by Supabase". The Supabase gateway already verified
+        // the signature before our code runs (otherwise we'd get a
+        // 401 UNAUTHORIZED_INVALID_JWT_FORMAT response from the
+        // platform), so it's safe here to just decode the payload
+        // and check the role claim.
+        const isServiceRoleCaller = decodeJwtRole(jwt) === "service_role";
+
+        if (!isServiceRoleCaller) {
+            // Pass the JWT explicitly to getUser(). Otherwise supabase-js looks at
+            // its own (empty) stored session and the auth check silently fails
+            // regardless of the Authorization header. This is the pattern that
+            // works for ES256 access tokens too.
+            const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            const { data: userData, error: userErr } = await authClient.auth.getUser(jwt);
+            if (userErr || !userData?.user) {
+                return json({ error: "Invalid or expired session" }, 401);
+            }
+
+            const { data: adminRow, error: adminErr } = await adminClient
+                .from("admin_users")
+                .select("id")
+                .eq("user_id", userData.user.id)
+                .maybeSingle();
+            if (adminErr) {
+                console.error("admin_users lookup failed:", adminErr);
+                return json({ error: "Authorization check failed" }, 500);
+            }
+            if (!adminRow) {
+                return json({ error: "Admin access required" }, 403);
+            }
         }
 
         // Health check / config probe: tells the admin UI whether the function
@@ -131,6 +172,20 @@ serve(async (req: Request) => {
                 },
                 500,
             );
+        }
+
+        // --- action=sync: server-side full Offer18 -> stores upsert -------
+        // Used by pg_cron's nightly_offer18_sync. Mirrors the client-side
+        // sync in src/components/admin/AdminOffer18.tsx so the database
+        // stays fresh without an admin manually clicking "Sync All".
+        if (isSync) {
+            return await runServerSideSync({
+                offer18BaseUrl: OFFER18_BASE_URL,
+                apiKey: OFFER18_API_KEY,
+                affiliateId: OFFER18_AFFILIATE_ID,
+                merchantId: OFFER18_MERCHANT_ID,
+                adminClient,
+            });
         }
 
         // --- Build outbound Offer18 URL -----------------------------------
@@ -198,3 +253,160 @@ serve(async (req: Request) => {
         return json({ error: (err as Error).message ?? "Unknown error" }, 500);
     }
 });
+
+// ----------------------------------------------------------------------
+// Server-side sync: fetch Offer18's offer feed, upsert into `stores`.
+// ----------------------------------------------------------------------
+// Mirrors `convertToStore` + `handleSyncToDatabase` from
+// src/components/admin/AdminOffer18.tsx so the cron-driven sync produces
+// identical rows to the manual admin-button sync. Keep the two in step.
+
+type Offer18Offer = {
+    offerid: string | number;
+    name: string;
+    logo?: string;
+    click_url?: string;
+    impression_url?: string;
+    preview_url?: string;
+    model?: string;
+    currency?: string;
+    price?: string;
+    payout?: Array<{ payout?: string }>;
+    events?: unknown;
+    country_allow?: string;
+    country_block?: string;
+    category?: string;
+    offer_terms?: string;
+    offer_kpi?: string;
+    status?: string;
+    authorized?: string;
+};
+
+function convertOfferToStoreRow(offer: Offer18Offer): Record<string, unknown> | null {
+    if (!offer?.name) return null;
+    const slug = offer.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+    if (!slug) return null;
+
+    const bestPayout =
+        offer.payout && offer.payout.length > 0 ? offer.payout[0] : null;
+    let cashbackPercent = 0;
+    let cashbackType: "percent" | "flat" = "percent";
+    if (bestPayout) {
+        const v = parseFloat(bestPayout.payout ?? "");
+        if (!isNaN(v)) cashbackPercent = v;
+        cashbackType = offer.model === "CPS" ? "percent" : "flat";
+    }
+
+    return {
+        name: offer.name,
+        slug,
+        description:
+            offer.offer_terms ||
+            offer.offer_kpi ||
+            `${offer.name} - ${offer.model ?? "Offer"} offer`,
+        logo_url: offer.logo ?? null,
+        cashback_percent: cashbackPercent,
+        cashback_type: cashbackType,
+        category: offer.category ? offer.category.split(",")[0].trim() : "General",
+        affiliate_url: offer.click_url ?? null,
+        network_type: "offer18",
+        offer18_offer_id: String(offer.offerid),
+        offers_count: 1,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+        api_config: {
+            offer_id: offer.offerid,
+            click_url: offer.click_url,
+            impression_url: offer.impression_url,
+            preview_url: offer.preview_url,
+            model: offer.model,
+            currency: offer.currency,
+            price: offer.price,
+            payout: offer.payout,
+            events: offer.events,
+            country_allow: offer.country_allow,
+            country_block: offer.country_block,
+            authorized: offer.authorized === "true",
+        },
+    };
+}
+
+async function runServerSideSync(args: {
+    offer18BaseUrl: string;
+    apiKey: string;
+    affiliateId: string;
+    merchantId: string;
+    adminClient: ReturnType<typeof createClient>;
+}): Promise<Response> {
+    const { offer18BaseUrl, apiKey, affiliateId, merchantId, adminClient } = args;
+
+    // We don't bother with active/authorized filters here: Offer18's
+    // server-side `offer_status=1` filter often returns "no offers found"
+    // for accounts without pre-authorized offers, so we mirror the client
+    // and pull everything, then keep what's `status='active'`.
+    const params = new URLSearchParams({
+        key: apiKey,
+        aid: affiliateId,
+        mid: merchantId,
+    });
+    const upstream = await fetch(`${offer18BaseUrl}?${params}`, { method: "GET" });
+    const text = await upstream.text();
+
+    let parsed: { data?: Record<string, Offer18Offer> } = {};
+    try { parsed = JSON.parse(text); } catch {
+        return json(
+            {
+                error: "Offer18 returned a non-JSON response",
+                status: upstream.status,
+                body: text.slice(0, 500),
+            },
+            502,
+        );
+    }
+
+    const offers = Object.values(parsed?.data ?? {});
+    const activeOffers = offers.filter(
+        (o) => !o.status || o.status === "active",
+    );
+
+    // Map -> dedupe by slug -> batch upsert. Same shape as the client.
+    const rows: Record<string, unknown>[] = [];
+    const bySlug = new Map<string, Record<string, unknown>>();
+    for (const o of activeOffers) {
+        const row = convertOfferToStoreRow(o);
+        if (!row) continue;
+        bySlug.set(row.slug as string, row);
+    }
+    for (const r of bySlug.values()) rows.push(r);
+
+    const BATCH = 50;
+    let success = 0;
+    let failures = 0;
+    const errors: string[] = [];
+    for (let i = 0; i < rows.length; i += BATCH) {
+        const batch = rows.slice(i, i + BATCH);
+        const { error } = await adminClient
+            .from("stores")
+            .upsert(batch, { onConflict: "slug", ignoreDuplicates: false });
+        if (error) {
+            failures += batch.length;
+            errors.push(error.message);
+            console.error("offer18-proxy sync batch failed:", error);
+        } else {
+            success += batch.length;
+        }
+    }
+
+    return json({
+        success: failures === 0,
+        fetched: offers.length,
+        active: activeOffers.length,
+        upserted: success,
+        failures,
+        errors: errors.slice(0, 5),
+        timestamp: new Date().toISOString(),
+    });
+}
