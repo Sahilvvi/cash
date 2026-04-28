@@ -112,6 +112,24 @@ serve(async (req) => {
             return await failJson(400, 'missing_session', 'Missing session_id or equivalent tracking parameter')
         }
 
+        // Rate-limit: throttle per source IP and per session_id. Blocks
+        // both attacker spam (one IP firing thousands of postbacks)
+        // and per-session abuse (same session_id hammered to walk the
+        // state machine). Records the hit even when blocked so repeat
+        // attackers see strictly increasing counts.
+        const { data: rlBlock, error: rlErr } = await supabaseClient.rpc(
+            'check_postback_rate_limit',
+            { p_ip: ip, p_session_id: sessionId }
+        )
+        if (rlErr) {
+            // Don't fail open silently; surface but allow processing
+            // since a broken rate-limit RPC shouldn't block real money.
+            console.error('check_postback_rate_limit failed:', rlErr)
+        } else if (rlBlock) {
+            console.warn(`Rejected postback: rate-limit ${rlBlock} (ip=${ip}, session=${sessionId})`)
+            return await failJson(429, `rate_limit_${rlBlock}`, `Rate limit exceeded (${rlBlock})`)
+        }
+
         console.log(`Processing conversion for session: ${sessionId}`)
 
         // 1. Verify the session_id exists in affiliate_clicks AND bind the
