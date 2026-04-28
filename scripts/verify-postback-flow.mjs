@@ -1099,6 +1099,18 @@ async function testRateLimiting() {
         return;
     }
 
+    // The runner shares a single source IP, so each sub-test would
+    // poison the next one's per-IP budget. Reset between sub-tests
+    // with a service-role DELETE — RLS lets the service role through.
+    const resetHits = async () => {
+        await rest(`/rest/v1/rate_limit_hits?bucket=in.(click_ip,click_user,postback_ip,postback_session)`, {
+            method: "DELETE",
+            headers: { Prefer: "return=minimal" },
+        });
+    };
+
+    await resetHits();
+
     // I.1 affiliate_clicks per-IP limit triggers within a 35-insert burst.
     {
         const user = await createUser("ratelimit-clicks");
@@ -1137,12 +1149,8 @@ async function testRateLimiting() {
     }
 
     // I.2 affiliate_clicks trigger overrides client-supplied ip_address
-    //     with the server-observed x-forwarded-for. Use a separate user
-    //     so the per-user 1h window doesn't bleed in.
-    //     We skip this assertion if the per-IP burst above has already
-    //     spent the 30/min budget — otherwise it'd flake. The intent of
-    //     I.1 already covers the trigger raising on excess; here we
-    //     just want to know the IP override path runs at least once.
+    //     with the server-observed x-forwarded-for.
+    await resetHits();
     {
         const user = await createUser("ratelimit-ip-spoof");
         const r = await rest("/rest/v1/affiliate_clicks", {
@@ -1156,23 +1164,17 @@ async function testRateLimiting() {
                 ip_address: "1.2.3.4",
             }),
         });
-        if (r.status === 201) {
-            const stored = Array.isArray(r.json) ? r.json[0] : null;
-            assert(stored?.ip_address && stored.ip_address !== "1.2.3.4",
-                `ip-spoof: ip_address overridden by trigger ` +
-                `(got ${stored?.ip_address})`);
-        } else {
-            // The per-IP window from I.1 is still hot — that itself is
-            // proof the trigger is enforcing, so we count this as ok.
-            assert(typeof r.json?.message === "string"
-                && r.json.message.includes("rate_limit_exceeded"),
-                `ip-spoof: insert blocked by rate-limit trigger ` +
-                `(status=${r.status} msg=${r.json?.message})`);
-        }
+        assert(r.status === 201,
+            `ip-spoof: insert succeeded (got ${r.status})`);
+        const stored = Array.isArray(r.json) ? r.json[0] : null;
+        assert(stored?.ip_address && stored.ip_address !== "1.2.3.4",
+            `ip-spoof: ip_address overridden by trigger ` +
+            `(got ${stored?.ip_address})`);
     }
 
     // I.3 Postback rate-limit per session_id: 11+ postbacks for the
     //     same session_id inside 1 minute must yield ≥1 429.
+    await resetHits();
     {
         const user = await createUser("ratelimit-postback");
         const sessionId = randomUUID();
