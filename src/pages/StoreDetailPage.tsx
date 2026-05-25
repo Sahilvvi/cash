@@ -62,8 +62,8 @@ const StoreDetailPage = () => {
     trackClick.mutate({
       storeId: store.id,
       affiliateUrl,
-      networkType: (store as any).network_type,
-      apiConfig: (store as any).api_config
+      networkType: (store as Record<string, unknown>).network_type as string | undefined,
+      apiConfig: (store as Record<string, unknown>).api_config as Record<string, string> | undefined
     });
 
     toast.success("Redirecting to store...", {

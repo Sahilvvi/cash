@@ -61,7 +61,7 @@ const StoresPage = () => {
     return matchesSearch && matchesFilter && matchesCategory && matchesLetter;
   });
 
-  const handleShopNow = (store: any) => {
+  const handleShopNow = (store: { id: string; slug: string; affiliate_url: string | null; network_type?: string; api_config?: Record<string, string> }) => {
     const affiliateUrl = store.affiliate_url || `https://${store.slug}.com`;
 
     trackClick.mutate({

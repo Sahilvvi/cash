@@ -17,7 +17,7 @@ const SpinWinPage = () => {
   
   const [isSpinning, setIsSpinning] = useState(false);
   const [rotation, setRotation] = useState(0);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<{ reward?: { name?: string; reward_type?: string } } | null>(null);
   const wheelRef = useRef<HTMLDivElement>(null);
 
   const handleSpin = async () => {
@@ -59,9 +59,9 @@ const SpinWinPage = () => {
           toast.success(`🎉 You won ${spinResult.reward?.name}!`);
         }
       }, 4000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       setIsSpinning(false);
-      toast.error(error.message || "Something went wrong!");
+      toast.error(error instanceof Error ? error.message : "Something went wrong!");
     }
   };
 
