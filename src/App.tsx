@@ -24,8 +24,7 @@ const AboutPage = lazy(() => import("./pages/AboutPage"));
 const DashboardPage = lazy(() => import("./pages/DashboardPage"));
 const TermsPage = lazy(() => import("./pages/TermsPage"));
 const StoreDetailPage = lazy(() => import("./pages/StoreDetailPage"));
-const SpinWinPage = lazy(() => import("./pages/SpinWinPage"));
-const GiftCardsPage = lazy(() => import("./pages/GiftCardsPage"));
+
 const AdminPage = lazy(() => import("./pages/AdminPage"));
 const AdminLoginPage = lazy(() => import("./pages/AdminLoginPage"));
 const CategoryPage = lazy(() => import("./pages/CategoryPage"));
@@ -73,8 +72,8 @@ const App = () => (
                 <Route path="/terms" element={<TermsPage />} />
                 <Route path="/dashboard" element={<RequireAuth><DashboardPage /></RequireAuth>} />
                 <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
-                <Route path="/spin-win" element={<SpinWinPage />} />
-                <Route path="/gift-cards" element={<GiftCardsPage />} />
+                <Route path="/spin-win" element={<Navigate to="/" replace />} />
+                <Route path="/gift-cards" element={<Navigate to="/" replace />} />
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="/admin/login" element={<AdminLoginPage />} />
                 <Route path="/category/:categorySlug" element={<CategoryPage />} />

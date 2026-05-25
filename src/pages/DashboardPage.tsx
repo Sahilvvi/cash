@@ -5,10 +5,8 @@ import Footer from "@/components/layout/Footer";
 import { useAuth } from "@/contexts/AuthContext";
 import { useReferrals, useReferralStats } from "@/hooks/useReferrals";
 import { useNotifications, useMarkAllAsRead } from "@/hooks/useNotifications";
-import { useUserGiftCards } from "@/hooks/useGiftCards";
 import { useCashbackTransactions, useCashbackStats } from "@/hooks/useCashback";
 import { useAffiliateClicks } from "@/hooks/useAffiliateTracking";
-import { useUserSpins, useSpinStats } from "@/hooks/useUserSpins";
 import { useWithdrawals, useWithdrawalStats } from "@/hooks/useWithdrawals";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -22,8 +20,6 @@ import {
   ArrowUpRight,
   Copy,
   Users,
-  Gift,
-  CreditCard,
   History,
   Settings,
   Bell,
@@ -34,7 +30,6 @@ import {
   Phone,
   Save,
   ExternalLink,
-  RotateCw,
   IndianRupee,
   CheckCircle,
   Timer,
@@ -51,12 +46,9 @@ const DashboardPage = () => {
   const { data: referrals = [] } = useReferrals();
   const { data: referralStats } = useReferralStats();
   const { data: notifications = [] } = useNotifications();
-  const { data: userGiftCards = [] } = useUserGiftCards();
   const { data: cashbackTransactions = [] } = useCashbackTransactions();
   const { data: affiliateClicks = [] } = useAffiliateClicks();
   const { data: cashbackStats } = useCashbackStats();
-  const { data: userSpins = [] } = useUserSpins();
-  const { data: spinStats } = useSpinStats();
   const { data: withdrawals = [] } = useWithdrawals();
   const { data: withdrawalStats } = useWithdrawalStats();
   const markAllAsRead = useMarkAllAsRead();
@@ -99,13 +91,6 @@ const DashboardPage = () => {
           queryClient.invalidateQueries({ queryKey: ["unread_count"] });
         })
         .subscribe(),
-      // Gift cards subscription
-      supabase
-        .channel('dashboard-gift-cards')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'user_gift_cards', filter: `user_id=eq.${user.id}` }, () => {
-          queryClient.invalidateQueries({ queryKey: ["user_gift_cards"] });
-        })
-        .subscribe(),
       // Profile subscription
       supabase
         .channel('dashboard-profile')
@@ -127,14 +112,6 @@ const DashboardPage = () => {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'withdrawals', filter: `user_id=eq.${user.id}` }, () => {
           queryClient.invalidateQueries({ queryKey: ["withdrawals"] });
           queryClient.invalidateQueries({ queryKey: ["withdrawal_stats"] });
-        })
-        .subscribe(),
-      // User spins subscription
-      supabase
-        .channel('dashboard-spins')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'user_spins', filter: `user_id=eq.${user.id}` }, () => {
-          queryClient.invalidateQueries({ queryKey: ["user_spins"] });
-          queryClient.invalidateQueries({ queryKey: ["spin_stats"] });
         })
         .subscribe(),
     ];
@@ -190,8 +167,7 @@ const DashboardPage = () => {
     { id: "wallet", label: "Wallet", icon: Wallet, badge: withdrawalStats?.pending ? `₹${withdrawalStats.pending}` : undefined },
     { id: "cashback", label: "Cashback", icon: IndianRupee, badge: cashbackStats?.pending ? `₹${cashbackStats.pending}` : undefined },
     { id: "referrals", label: "Refer & Earn", icon: Users },
-    { id: "giftcards", label: "My Gift Cards", icon: CreditCard, badge: userGiftCards.length || undefined },
-    { id: "spins", label: "Spin History", icon: RotateCw, badge: spinStats?.totalSpins || undefined },
+
     { id: "notifications", label: "Notifications", icon: Bell, badge: notifications.filter(n => !n.is_read).length || undefined },
     { id: "settings", label: "Settings", icon: Settings },
   ];
@@ -288,14 +264,7 @@ const DashboardPage = () => {
                     <p className="text-sm text-muted-foreground mt-2">Friends invited</p>
                   </div>
 
-                  <div className="bg-card rounded-xl p-6 shadow-card">
-                    <div className="flex items-center gap-3 mb-3">
-                      <RotateCw className="w-8 h-8 text-primary" />
-                      <span className="text-sm font-medium text-muted-foreground">Spin Wins</span>
-                    </div>
-                    <p className="text-3xl font-bold font-heading text-foreground">₹{spinStats?.totalWinnings || 0}</p>
-                    <p className="text-sm text-muted-foreground mt-2">{spinStats?.totalSpins || 0} spins</p>
-                  </div>
+
                 </div>
 
                 {/* Referral Banner */}
@@ -327,48 +296,29 @@ const DashboardPage = () => {
                 {/* Recent Activity */}
                 <div className="bg-card rounded-xl p-6 shadow-card">
                   <h3 className="font-bold font-heading text-lg mb-4">Recent Activity</h3>
-                  {cashbackTransactions.length === 0 && referrals.length === 0 && userSpins.length === 0 ? (
+                  {cashbackTransactions.length === 0 && referrals.length === 0 ? (
                     <p className="text-muted-foreground text-center py-8">
                       No activity yet. Start shopping to earn cashback!
                     </p>
                   ) : (
                     <div className="space-y-3">
-                      {[...cashbackTransactions.slice(0, 3).map(t => ({
-                        type: 'cashback',
-                        date: t.created_at,
-                        data: t
-                      })), ...userSpins.slice(0, 2).map(s => ({
-                        type: 'spin',
-                        date: s.spun_at,
-                        data: s
-                      }))]
-                        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                        .slice(0, 5)
-                        .map((item, idx) => (
+                      {cashbackTransactions.slice(0, 5).map((t, idx) => (
                           <div key={idx} className="flex items-center justify-between py-2 border-b border-border last:border-0">
                             <div className="flex items-center gap-3">
-                              {item.type === 'cashback' ? (
-                                <div className="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center">
-                                  <IndianRupee className="w-5 h-5 text-success" />
-                                </div>
-                              ) : (
-                                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                                  <RotateCw className="w-5 h-5 text-primary" />
-                                </div>
-                              )}
+                              <div className="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center">
+                                <IndianRupee className="w-5 h-5 text-success" />
+                              </div>
                               <div>
                                 <p className="font-medium">
-                                  {item.type === 'cashback'
-                                    ? (item.data as any).store?.name || 'Cashback'
-                                    : (item.data as any).reward?.name || 'Spin Reward'}
+                                  {(t as Record<string, unknown> & { store?: { name?: string } }).store?.name || 'Cashback'}
                                 </p>
                                 <p className="text-sm text-muted-foreground">
-                                  {new Date(item.date).toLocaleDateString()}
+                                  {new Date(t.created_at).toLocaleDateString()}
                                 </p>
                               </div>
                             </div>
-                            <span className={`font-semibold ${item.type === 'cashback' ? 'text-success' : 'text-primary'}`}>
-                              +₹{item.type === 'cashback' ? (item.data as any).amount : (item.data as any).reward_value || 0}
+                            <span className="font-semibold text-success">
+                              +₹{t.amount}
                             </span>
                           </div>
                         ))}
@@ -386,13 +336,13 @@ const DashboardPage = () => {
                     <Gift className="w-8 h-8 text-primary mx-auto mb-2" />
                     <p className="font-medium">Today's Deals</p>
                   </Link>
-                  <Link to="/gift-cards" className="bg-card rounded-xl p-4 shadow-card hover:shadow-hover transition-shadow text-center">
-                    <Wallet className="w-8 h-8 text-primary mx-auto mb-2" />
-                    <p className="font-medium">Gift Cards</p>
+                  <Link to="/missing-cashback" className="bg-card rounded-xl p-4 shadow-card hover:shadow-hover transition-shadow text-center">
+                    <Clock className="w-8 h-8 text-primary mx-auto mb-2" />
+                    <p className="font-medium">Missing Cashback</p>
                   </Link>
-                  <Link to="/spin-win" className="bg-card rounded-xl p-4 shadow-card hover:shadow-hover transition-shadow text-center">
-                    <RotateCw className="w-8 h-8 text-primary mx-auto mb-2" />
-                    <p className="font-medium">Spin & Win</p>
+                  <Link to="/profile" className="bg-card rounded-xl p-4 shadow-card hover:shadow-hover transition-shadow text-center">
+                    <Wallet className="w-8 h-8 text-primary mx-auto mb-2" />
+                    <p className="font-medium">My Wallet</p>
                   </Link>
                 </div>
               </div>
@@ -691,159 +641,6 @@ const DashboardPage = () => {
                           </div>
                         ))}
                       </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {activeTab === "giftcards" && (
-              <div className="space-y-6">
-                <div className="bg-card rounded-xl p-6 shadow-card">
-                  <div className="flex items-center justify-between mb-6">
-                    <h3 className="font-bold font-heading text-xl">My Gift Cards</h3>
-                    <Link to="/gift-cards">
-                      <Button variant="outline" size="sm">
-                        <Gift className="w-4 h-4 mr-2" />
-                        Buy More
-                      </Button>
-                    </Link>
-                  </div>
-
-                  {userGiftCards.length === 0 ? (
-                    <div className="text-center py-12">
-                      <CreditCard className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                      <h4 className="font-semibold text-lg mb-2">No Gift Cards Yet</h4>
-                      <p className="text-muted-foreground mb-4">
-                        Purchase gift cards and save on your favorite brands
-                      </p>
-                      <Link to="/gift-cards">
-                        <Button>
-                          <Gift className="w-4 h-4 mr-2" />
-                          Browse Gift Cards
-                        </Button>
-                      </Link>
-                    </div>
-                  ) : (
-                    <div className="grid gap-4">
-                      {userGiftCards.map((ugc) => (
-                        <div
-                          key={ugc.id}
-                          className="border border-border rounded-lg p-4 flex items-center gap-4"
-                        >
-                          <div className="w-16 h-16 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
-                            {ugc.gift_card?.image_url ? (
-                              <img
-                                src={ugc.gift_card.image_url}
-                                alt={ugc.gift_card.name}
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <CreditCard className="w-8 h-8 text-muted-foreground" />
-                            )}
-                          </div>
-                          <div className="flex-1">
-                            <h4 className="font-semibold">{ugc.gift_card?.name || "Gift Card"}</h4>
-                            <p className="text-sm text-muted-foreground">{ugc.gift_card?.brand}</p>
-                            <div className="flex items-center gap-4 mt-1">
-                              <span className="text-lg font-bold text-primary">₹{ugc.amount}</span>
-                              <span className={`text-xs px-2 py-0.5 rounded-full ${ugc.status === 'active'
-                                ? 'bg-success/10 text-success'
-                                : 'bg-muted text-muted-foreground'
-                                }`}>
-                                {ugc.status}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-xs text-muted-foreground mb-1">Code</p>
-                            <p className="font-mono text-sm font-medium">{ugc.code}</p>
-                            {ugc.pin && (
-                              <>
-                                <p className="text-xs text-muted-foreground mt-2 mb-1">PIN</p>
-                                <p className="font-mono text-sm font-medium">{ugc.pin}</p>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {activeTab === "spins" && (
-              <div className="space-y-6">
-                {/* Spin Stats */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="bg-gradient-to-br from-primary to-primary/80 rounded-xl p-6 text-primary-foreground">
-                    <div className="flex items-center gap-3 mb-3">
-                      <RotateCw className="w-8 h-8" />
-                      <span className="text-sm font-medium opacity-90">Total Spins</span>
-                    </div>
-                    <p className="text-3xl font-bold font-heading">{spinStats?.totalSpins || 0}</p>
-                    <p className="text-sm opacity-80 mt-2">Wheel spins</p>
-                  </div>
-
-                  <div className="bg-card rounded-xl p-6 shadow-card">
-                    <div className="flex items-center gap-3 mb-3">
-                      <Gift className="w-8 h-8 text-success" />
-                      <span className="text-sm font-medium text-muted-foreground">Total Winnings</span>
-                    </div>
-                    <p className="text-3xl font-bold font-heading text-foreground">₹{spinStats?.totalWinnings || 0}</p>
-                    <p className="text-sm text-muted-foreground mt-2">From spins</p>
-                  </div>
-                </div>
-
-                {/* Spin History */}
-                <div className="bg-card rounded-xl shadow-card overflow-hidden">
-                  <div className="p-4 border-b border-border flex items-center justify-between">
-                    <h3 className="font-bold font-heading">Spin History</h3>
-                    <Link to="/spin-win">
-                      <Button size="sm">
-                        <RotateCw className="w-4 h-4 mr-2" />
-                        Spin Now
-                      </Button>
-                    </Link>
-                  </div>
-
-                  {userSpins.length === 0 ? (
-                    <div className="p-8 text-center">
-                      <RotateCw className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                      <h4 className="font-semibold text-lg mb-2">No Spins Yet</h4>
-                      <p className="text-muted-foreground mb-4">
-                        Try your luck and win exciting rewards!
-                      </p>
-                      <Link to="/spin-win">
-                        <Button>
-                          <RotateCw className="w-4 h-4 mr-2" />
-                          Spin the Wheel
-                        </Button>
-                      </Link>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-border">
-                      {userSpins.map((spin) => (
-                        <div key={spin.id} className="p-4 flex items-center gap-4">
-                          <div
-                            className="w-12 h-12 rounded-full flex items-center justify-center"
-                            style={{ backgroundColor: spin.reward?.color || '#F37022' }}
-                          >
-                            <RotateCw className="w-6 h-6 text-white" />
-                          </div>
-                          <div className="flex-1">
-                            <p className="font-medium">{spin.reward?.name || "Reward"}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {new Date(spin.spun_at).toLocaleString()}
-                            </p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold text-success">+₹{spin.reward_value || 0}</p>
-                            <span className="text-xs text-muted-foreground">{spin.reward?.reward_type}</span>
-                          </div>
-                        </div>
-                      ))}
                     </div>
                   )}
                 </div>

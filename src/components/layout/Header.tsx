@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Search, Gift, Trophy, Menu, X, User, LogOut, Settings, ChevronDown } from "lucide-react";
+import { Search, Menu, X, User, LogOut, Settings, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -169,28 +169,7 @@ const Header = () => {
               )}
             </div>
 
-            {/* Divider */}
-            <div className="hidden md:block w-px h-6 bg-border" />
 
-            {/* Quick Links - Gift Cards & Spin Win */}
-            <div className="hidden md:flex items-center gap-1">
-              <Link 
-                to="/gift-cards" 
-                className="group flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-full transition-all duration-200 hover:bg-destructive/10"
-              >
-                <Gift className="w-4 h-4 text-destructive group-hover:scale-110 transition-transform" />
-                <span className="hidden lg:inline text-foreground/80 group-hover:text-destructive">Gift Cards</span>
-                <span className="bg-gradient-to-r from-destructive to-destructive/80 text-destructive-foreground text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase">New</span>
-              </Link>
-              
-              <Link 
-                to="/spin-win" 
-                className="group flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-full transition-all duration-200 hover:bg-primary/10"
-              >
-                <Trophy className="w-4 h-4 text-primary group-hover:scale-110 group-hover:rotate-12 transition-transform" />
-                <span className="hidden lg:inline text-foreground/80 group-hover:text-primary">Spin & Win</span>
-              </Link>
-            </div>
 
             {/* Mobile Menu Button */}
             <button
@@ -216,27 +195,6 @@ const Header = () => {
               <Search className="w-5 h-5" />
               <span className="text-sm">Search stores, deals...</span>
             </button>
-
-            {/* Quick Links - Mobile */}
-            <div className="grid grid-cols-2 gap-2">
-              <Link 
-                to="/gift-cards" 
-                className="flex items-center justify-center gap-2 py-3 px-4 bg-destructive/10 hover:bg-destructive/15 text-destructive rounded-xl font-semibold text-sm transition-colors"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                <Gift className="w-5 h-5" />
-                <span>Gift Cards</span>
-                <span className="bg-destructive text-destructive-foreground text-[9px] px-1.5 py-0.5 rounded-full font-bold">NEW</span>
-              </Link>
-              <Link 
-                to="/spin-win" 
-                className="flex items-center justify-center gap-2 py-3 px-4 bg-primary/10 hover:bg-primary/15 text-primary rounded-xl font-semibold text-sm transition-colors"
-                onClick={() => setIsMenuOpen(false)}
-              >
-                <Trophy className="w-5 h-5" />
-                <span>Spin & Win</span>
-              </Link>
-            </div>
 
             {/* Navigation Links */}
             <nav className="space-y-1">
