@@ -677,8 +677,7 @@ const AdminPage = () => {
     { id: "deals", label: "Deals", icon: Tag },
     { id: "tracking", label: "Tracking", icon: BarChart3 },
     { id: "offer18", label: "Offer18 Integration", icon: Network },
-    { id: "gift-cards", label: "Gift Cards", icon: Gift },
-    { id: "spin-rewards", label: "Spin Rewards", icon: RotateCw },
+
     { id: "withdrawals", label: "Withdrawals", icon: Wallet },
     { id: "users", label: "Users", icon: Users },
     { id: "referrals", label: "Referrals", icon: Share2 },
@@ -744,19 +743,9 @@ const AdminPage = () => {
                 <p className="text-muted-foreground">Users</p>
               </div>
               <div className="bg-card rounded-xl p-6 shadow-card">
-                <Gift className="w-8 h-8 text-primary mb-2" />
-                <p className="text-3xl font-bold">{stats?.giftCards || 0}</p>
-                <p className="text-muted-foreground">Gift Cards</p>
-              </div>
-              <div className="bg-card rounded-xl p-6 shadow-card">
                 <Share2 className="w-8 h-8 text-primary mb-2" />
                 <p className="text-3xl font-bold">{stats?.referrals || 0}</p>
                 <p className="text-muted-foreground">Referrals</p>
-              </div>
-              <div className="bg-card rounded-xl p-6 shadow-card">
-                <RotateCw className="w-8 h-8 text-primary mb-2" />
-                <p className="text-3xl font-bold">{stats?.spins || 0}</p>
-                <p className="text-muted-foreground">Spins</p>
               </div>
             </div>
 
@@ -1197,74 +1186,6 @@ const AdminPage = () => {
           <AdminOffer18 />
         )}
 
-        {/* Gift Cards */}
-        {activeSection === "gift-cards" && (
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <h1 className="text-2xl font-bold font-heading">Gift Cards</h1>
-              <Button onClick={() => { setGiftCardForm({ name: "", brand: "", description: "", image_url: "", category: "", category_id: "", subcategory_id: "", discount_percent: "", denominations: "", is_active: true }); setEditingGiftCard(null); setShowGiftCardModal(true); }}>
-                <Plus className="w-4 h-4 mr-2" /> Add Gift Card
-              </Button>
-            </div>
-            <div className="bg-card rounded-xl shadow-card overflow-hidden">
-              <div className="divide-y divide-border">
-                {giftCards.map((gc: any) => (
-                  <div key={gc.id} className="p-4 flex items-center gap-4">
-                    <img src={gc.image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(gc.brand)}&background=random`} alt={gc.name} className="w-12 h-12 rounded-lg object-contain bg-muted" />
-                    <div className="flex-1">
-                      <p className="font-semibold">{gc.name}</p>
-                      <p className="text-sm text-muted-foreground">{gc.brand} | {gc.discount_percent}% off</p>
-                    </div>
-                    <span className={`px-2 py-1 rounded-full text-xs ${gc.is_active ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>
-                      {gc.is_active ? "Active" : "Inactive"}
-                    </span>
-                    <Button variant="ghost" size="sm" onClick={() => { setEditingGiftCard(gc); setGiftCardForm({ name: gc.name, brand: gc.brand, description: gc.description || "", image_url: gc.image_url || "", category: gc.category || "", category_id: gc.category_id || "", subcategory_id: gc.subcategory_id || "", discount_percent: gc.discount_percent?.toString() || "", denominations: Array.isArray(gc.denominations) ? gc.denominations.join(", ") : "", is_active: gc.is_active }); setShowGiftCardModal(true); }}>
-                      <Edit className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteGiftCard.mutate(gc.id)}>
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Spin Rewards */}
-        {activeSection === "spin-rewards" && (
-          <div>
-            <div className="flex items-center justify-between mb-6">
-              <h1 className="text-2xl font-bold font-heading">Spin Rewards</h1>
-              <Button onClick={() => { setSpinRewardForm({ name: "", reward_type: "cashback", reward_value: "", probability: "", color: "#F37022", is_active: true }); setEditingSpinReward(null); setShowSpinRewardModal(true); }}>
-                <Plus className="w-4 h-4 mr-2" /> Add Reward
-              </Button>
-            </div>
-            <div className="bg-card rounded-xl shadow-card overflow-hidden">
-              <div className="divide-y divide-border">
-                {spinRewards.map((reward: any) => (
-                  <div key={reward.id} className="p-4 flex items-center gap-4">
-                    <div className="w-10 h-10 rounded-full" style={{ backgroundColor: reward.color || "#F37022" }} />
-                    <div className="flex-1">
-                      <p className="font-semibold">{reward.name}</p>
-                      <p className="text-sm text-muted-foreground">{reward.reward_type} | ₹{reward.reward_value} | {reward.probability}%</p>
-                    </div>
-                    <span className={`px-2 py-1 rounded-full text-xs ${reward.is_active ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>
-                      {reward.is_active ? "Active" : "Inactive"}
-                    </span>
-                    <Button variant="ghost" size="sm" onClick={() => { setEditingSpinReward(reward); setSpinRewardForm({ name: reward.name, reward_type: reward.reward_type, reward_value: reward.reward_value?.toString() || "", probability: reward.probability?.toString() || "", color: reward.color || "#F37022", is_active: reward.is_active }); setShowSpinRewardModal(true); }}>
-                      <Edit className="w-4 h-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteSpinReward.mutate(reward.id)}>
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Users */}
         {activeSection === "users" && (
           <div>
@@ -1534,79 +1455,6 @@ const AdminPage = () => {
               subcategory_id: dealForm.subcategory_id || null
             })} className="w-full" disabled={saveDeal.isPending}>
               {saveDeal.isPending ? "Saving..." : "Save Deal"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showGiftCardModal} onOpenChange={setShowGiftCardModal}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editingGiftCard ? "Edit Gift Card" : "Add Gift Card"}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <Input placeholder="Name" value={giftCardForm.name} onChange={(e) => setGiftCardForm({ ...giftCardForm, name: e.target.value })} />
-            <Input placeholder="Brand" value={giftCardForm.brand} onChange={(e) => setGiftCardForm({ ...giftCardForm, brand: e.target.value })} />
-            <div>
-              <label className="text-sm font-medium mb-2 block">Gift Card Image</label>
-              <ImageUpload
-                value={giftCardForm.image_url}
-                onChange={(url) => setGiftCardForm({ ...giftCardForm, image_url: url })}
-                folder="giftcards"
-                placeholder="Upload Gift Card Image"
-              />
-            </div>
-            <Textarea placeholder="Description" value={giftCardForm.description} onChange={(e) => setGiftCardForm({ ...giftCardForm, description: e.target.value })} />
-            <div className="grid grid-cols-2 gap-4">
-              <select value={giftCardForm.category_id} onChange={(e) => { setGiftCardForm({ ...giftCardForm, category_id: e.target.value, subcategory_id: "" }); }} className="border border-input rounded-md px-3 py-2 bg-background">
-                <option value="">Select Category</option>
-                {categories.map((cat: any) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
-              </select>
-              <select value={giftCardForm.subcategory_id} onChange={(e) => setGiftCardForm({ ...giftCardForm, subcategory_id: e.target.value })} className="border border-input rounded-md px-3 py-2 bg-background">
-                <option value="">Select Subcategory</option>
-                {subcategories.filter((sub: any) => sub.category_id === giftCardForm.category_id).map((sub: any) => <option key={sub.id} value={sub.id}>{sub.name}</option>)}
-              </select>
-            </div>
-            <Input placeholder="Discount %" type="number" value={giftCardForm.discount_percent} onChange={(e) => setGiftCardForm({ ...giftCardForm, discount_percent: e.target.value })} />
-            <Input placeholder="Denominations (comma-separated)" value={giftCardForm.denominations} onChange={(e) => setGiftCardForm({ ...giftCardForm, denominations: e.target.value })} />
-            <label className="flex items-center gap-2"><input type="checkbox" checked={giftCardForm.is_active} onChange={(e) => setGiftCardForm({ ...giftCardForm, is_active: e.target.checked })} /> Active</label>
-            <Button onClick={() => saveGiftCard.mutate({
-              ...giftCardForm,
-              discount_percent: parseFloat(giftCardForm.discount_percent) || 0,
-              denominations: giftCardForm.denominations.split(",").map(d => parseFloat(d.trim())).filter(d => !isNaN(d)),
-              category_id: giftCardForm.category_id || null,
-              subcategory_id: giftCardForm.subcategory_id || null,
-              category: categories.find((c: any) => c.id === giftCardForm.category_id)?.name || giftCardForm.category
-            })} className="w-full" disabled={saveGiftCard.isPending}>
-              {saveGiftCard.isPending ? "Saving..." : "Save Gift Card"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showSpinRewardModal} onOpenChange={setShowSpinRewardModal}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editingSpinReward ? "Edit Reward" : "Add Reward"}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <Input placeholder="Reward Name" value={spinRewardForm.name} onChange={(e) => setSpinRewardForm({ ...spinRewardForm, name: e.target.value })} />
-            <select value={spinRewardForm.reward_type} onChange={(e) => setSpinRewardForm({ ...spinRewardForm, reward_type: e.target.value })} className="w-full border border-input rounded-md px-3 py-2 bg-background">
-              <option value="cashback">Cashback</option>
-              <option value="points">Points</option>
-              <option value="coupon">Coupon</option>
-              <option value="gift_card">Gift Card</option>
-              <option value="better_luck">Better Luck</option>
-            </select>
-            <Input placeholder="Value (₹)" type="number" value={spinRewardForm.reward_value} onChange={(e) => setSpinRewardForm({ ...spinRewardForm, reward_value: e.target.value })} />
-            <Input placeholder="Probability (%)" type="number" value={spinRewardForm.probability} onChange={(e) => setSpinRewardForm({ ...spinRewardForm, probability: e.target.value })} />
-            <div className="flex items-center gap-4">
-              <label className="text-sm">Color:</label>
-              <input type="color" value={spinRewardForm.color} onChange={(e) => setSpinRewardForm({ ...spinRewardForm, color: e.target.value })} className="w-12 h-10 rounded cursor-pointer" />
-            </div>
-            <label className="flex items-center gap-2"><input type="checkbox" checked={spinRewardForm.is_active} onChange={(e) => setSpinRewardForm({ ...spinRewardForm, is_active: e.target.checked })} /> Active</label>
-            <Button onClick={() => saveSpinReward.mutate({ ...spinRewardForm, reward_value: parseFloat(spinRewardForm.reward_value) || 0, probability: parseInt(spinRewardForm.probability) || 10 })} className="w-full" disabled={saveSpinReward.isPending}>
-              {saveSpinReward.isPending ? "Saving..." : "Save Reward"}
             </Button>
           </div>
         </DialogContent>
