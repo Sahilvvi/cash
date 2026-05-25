@@ -57,7 +57,14 @@ const StoreDetailPage = () => {
   const handleShopAndEarn = () => {
     if (!store) return;
 
-    const affiliateUrl = store.affiliate_url || `https://${store.slug}.com`;
+    if (!store.affiliate_url) {
+      toast.error("This store is not available for cashback yet", {
+        description: "The affiliate link is not configured. Please try another store.",
+      });
+      return;
+    }
+
+    const affiliateUrl = store.affiliate_url;
 
     trackClick.mutate(
       {

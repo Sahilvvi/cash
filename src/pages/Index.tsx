@@ -23,8 +23,9 @@ const Index = () => {
   const settings = homepageData?.settings || {};
   const banners = homepageData?.banners || [];
 
-  const trendingStores = stores.filter(s => s.is_trending).slice(0, 12);
-  const popularStores = stores.slice(0, 12);
+  const activeStores = stores.filter(s => s.affiliate_url);
+  const trendingStores = activeStores.filter(s => s.is_trending).slice(0, 12);
+  const popularStores = activeStores.slice(0, 12);
   const topDeals = deals.slice(0, 6);
   const topCoupons = deals.filter(d => d.coupon_code).slice(0, 3);
 
