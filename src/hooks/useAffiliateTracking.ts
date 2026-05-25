@@ -48,10 +48,8 @@ export const useTrackAffiliateClick = () => {
           finalUrl = `${finalUrl}${separator}${paramName}=${sessionId}`;
         }
 
-        // Record the click with the real network so that postbacks can
-        // be bound to it (track-conversion rejects postbacks whose
-        // network_type doesn't match the click).
-        await supabase
+        // Record the click so postbacks can be matched to this session.
+        const { error } = await supabase
           .from("affiliate_clicks")
           .insert({
             user_id: user.id,
@@ -59,9 +57,15 @@ export const useTrackAffiliateClick = () => {
             session_id: sessionId,
             network_type: networkType || null,
           });
+
+        if (error) {
+          console.error("Failed to record affiliate click:", error.message);
+          // Open the URL before throwing so the redirect always happens.
+          window.open(finalUrl, '_blank', 'noopener,noreferrer');
+          throw new Error(error.message);
+        }
       }
 
-      // Open the affiliate URL in a new tab
       window.open(finalUrl, '_blank', 'noopener,noreferrer');
     },
   });

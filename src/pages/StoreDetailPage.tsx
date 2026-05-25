@@ -59,16 +59,26 @@ const StoreDetailPage = () => {
 
     const affiliateUrl = store.affiliate_url || `https://${store.slug}.com`;
 
-    trackClick.mutate({
-      storeId: store.id,
-      affiliateUrl,
-      networkType: (store as Record<string, unknown>).network_type as string | undefined,
-      apiConfig: (store as Record<string, unknown>).api_config as Record<string, string> | undefined
-    });
-
-    toast.success("Redirecting to store...", {
-      description: "Your visit is being tracked for cashback",
-    });
+    trackClick.mutate(
+      {
+        storeId: store.id,
+        affiliateUrl,
+        networkType: (store as Record<string, unknown>).network_type as string | undefined,
+        apiConfig: (store as Record<string, unknown>).api_config as Record<string, string> | undefined,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Redirecting to store...", {
+            description: "Your visit is being tracked for cashback",
+          });
+        },
+        onError: () => {
+          toast.warning("Redirecting to store...", {
+            description: "Could not record your visit — cashback may not be tracked",
+          });
+        },
+      },
+    );
   };
 
   if (storeLoading) {
