@@ -31,6 +31,15 @@ const AdminTracking = () => {
                 .order("clicked_at", { ascending: false })
                 .limit(100);
 
+            if (error && error.code === "PGRST200") {
+                const { data: fallback, error: fbError } = await supabase
+                    .from("affiliate_clicks")
+                    .select("*, store:stores(name, logo_url)")
+                    .order("clicked_at", { ascending: false })
+                    .limit(100);
+                if (fbError) throw fbError;
+                return fallback;
+            }
             if (error) throw error;
             return data;
         },
@@ -49,6 +58,15 @@ const AdminTracking = () => {
                 .order("created_at", { ascending: false })
                 .limit(100);
 
+            if (error && error.code === "PGRST200") {
+                const { data: fallback, error: fbError } = await supabase
+                    .from("cashback_transactions")
+                    .select("*, store:stores(name)")
+                    .order("created_at", { ascending: false })
+                    .limit(100);
+                if (fbError) throw fbError;
+                return fallback;
+            }
             if (error) throw error;
             return data;
         },
