@@ -72,13 +72,13 @@ const AdminTracking = () => {
         },
     });
 
-    const filteredClicks = clicks.filter((click: any) =>
+    const filteredClicks = !searchQuery ? clicks : clicks.filter((click: any) =>
         click.user?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         click.user?.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         click.store?.name?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const filteredTransactions = transactions.filter((t: any) =>
+    const filteredTransactions = !searchQuery ? transactions : transactions.filter((t: any) =>
         t.user?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.user?.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.store?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
