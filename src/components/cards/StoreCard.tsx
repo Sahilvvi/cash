@@ -10,7 +10,7 @@ interface StoreCardProps {
   // Older callers can still pass a pre-formatted `cashback` string.
   cashbackPercent?: number | string | null;
   cashback?: string;
-  cashbackType: "percent" | "flat" | "voucher";
+  cashbackType: string;
   offersCount: number;
   isNew?: boolean;
   isTrending?: boolean;

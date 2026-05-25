@@ -43,8 +43,8 @@ const GiftCardsPage = () => {
       setSelectedCard(null);
       setSelectedAmount(null);
       setActiveTab("my-cards");
-    } catch (error: any) {
-      toast.error(error.message || "Failed to purchase gift card");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "Failed to purchase gift card");
     }
   };
 

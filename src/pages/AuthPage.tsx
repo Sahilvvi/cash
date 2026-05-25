@@ -12,6 +12,7 @@ const AuthPage = () => {
   const { user, signIn, signUp, isLoading: authLoading } = useAuth();
   const mode = searchParams.get("mode") || "login";
   const referralCode = searchParams.get("ref") || "";
+  const redirectTo = searchParams.get("redirect") || "/dashboard";
   
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -30,9 +31,9 @@ const AuthPage = () => {
   // Redirect if already logged in
   useEffect(() => {
     if (user && !authLoading) {
-      navigate("/dashboard");
+      navigate(redirectTo);
     }
-  }, [user, authLoading, navigate]);
+  }, [user, authLoading, navigate, redirectTo]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -57,7 +58,7 @@ const AuthPage = () => {
     });
     
     setIsLoading(false);
-    navigate("/dashboard");
+    navigate(redirectTo);
   };
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -102,7 +103,7 @@ const AuthPage = () => {
     });
     
     setIsLoading(false);
-    navigate("/dashboard");
+    navigate(redirectTo);
   };
 
   const benefits = [

@@ -1,0 +1,19 @@
+{
+  "name": "Cashback - India's Top Cashback Site",
+  "short_name": "Cashback",
+  "description": "Save money on every online purchase with cashback, coupons, and deals from 300+ stores.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#F37022",
+  "orientation": "portrait-primary",
+  "categories": ["shopping", "finance"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

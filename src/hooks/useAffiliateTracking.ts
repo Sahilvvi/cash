@@ -10,7 +10,7 @@ export const useTrackAffiliateClick = () => {
       storeId: string;
       affiliateUrl: string;
       networkType?: string;
-      apiConfig?: any;
+      apiConfig?: Record<string, string>;
     }) => {
       let finalUrl = affiliateUrl;
 

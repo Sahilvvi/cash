@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Environment files (never commit secrets)
+.env
+.env.local
+.env.production
+.env.staging
+
 # Vercel CLI
 .vercel
 
