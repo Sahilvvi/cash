@@ -181,7 +181,7 @@ export function AdminOffer18() {
             const mappedRows = selected.map((offer) => ({
                 ...offer18Service.convertToStore(offer),
                 updated_at: new Date().toISOString(),
-                is_active: true,
+                is_active: !!offer.click_url,
                 offer18_offer_id: offer.offerid,
                 network_type: "offer18",
                 offers_count: 1,

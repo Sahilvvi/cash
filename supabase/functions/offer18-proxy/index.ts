@@ -315,7 +315,7 @@ function convertOfferToStoreRow(offer: Offer18Offer): Record<string, unknown> | 
         network_type: "offer18",
         offer18_offer_id: String(offer.offerid),
         offers_count: 1,
-        is_active: true,
+        is_active: !!offer.click_url,
         updated_at: new Date().toISOString(),
         api_config: {
             offer_id: offer.offerid,
@@ -343,14 +343,13 @@ async function runServerSideSync(args: {
 }): Promise<Response> {
     const { offer18BaseUrl, apiKey, affiliateId, merchantId, adminClient } = args;
 
-    // We don't bother with active/authorized filters here: Offer18's
-    // server-side `offer_status=1` filter often returns "no offers found"
-    // for accounts without pre-authorized offers, so we mirror the client
-    // and pull everything, then keep what's `status='active'`.
+    // Pass offer_access=1 to auto-approve public offers, giving us
+    // click_urls for any offer that allows automatic affiliate access.
     const params = new URLSearchParams({
         key: apiKey,
         aid: affiliateId,
         mid: merchantId,
+        offer_access: "1",
     });
     const upstream = await fetch(`${offer18BaseUrl}?${params}`, { method: "GET" });
     const text = await upstream.text();

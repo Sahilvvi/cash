@@ -44,6 +44,7 @@ const StoresPage = () => {
   const alphabets = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 
   const filteredStores = stores.filter((store) => {
+    if (!store.affiliate_url) return false;
     const matchesSearch = store.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesFilter =
       activeFilter === "all" ? true :
@@ -62,11 +63,14 @@ const StoresPage = () => {
   });
 
   const handleShopNow = (store: { id: string; slug: string; affiliate_url: string | null; network_type?: string; api_config?: Record<string, string> }) => {
-    const affiliateUrl = store.affiliate_url || `https://${store.slug}.com`;
+    if (!store.affiliate_url) {
+      toast.error("This store is not available for cashback yet");
+      return;
+    }
 
     trackClick.mutate({
       storeId: store.id,
-      affiliateUrl,
+      affiliateUrl: store.affiliate_url,
       networkType: store.network_type,
       apiConfig: store.api_config
     });

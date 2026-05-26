@@ -178,7 +178,9 @@ class Offer18Service {
      * Low-level fetch against the proxy.
      */
     async fetchOffers(params?: Offer18QueryParams): Promise<Offer18Response> {
-        const query: Record<string, string | number | undefined> = {};
+        const query: Record<string, string | number | undefined> = {
+            offer_access: 1,
+        };
         if (params) {
             if (params.offer_id) query.offer_id = params.offer_id;
             if (params.page) query.page = params.page;
@@ -187,7 +189,7 @@ class Offer18Service {
             if (params.country) query.country = params.country;
             if (params.offer_status) query.offer_status = params.offer_status;
             if (params.authorized) query.authorized = params.authorized;
-            if (params.offer_access) query.offer_access = params.offer_access;
+            if (params.offer_access !== undefined) query.offer_access = params.offer_access;
         }
 
         const session = (await supabase.auth.getSession()).data.session;
