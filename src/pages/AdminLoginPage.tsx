@@ -53,8 +53,8 @@ const AdminLoginPage = () => {
       // Success - user is admin
       toast.success("Welcome Admin!");
       navigate("/admin");
-    } catch (error: any) {
-      toast.error(error.message || "An error occurred");
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : "An error occurred");
     } finally {
       setIsLoading(false);
     }

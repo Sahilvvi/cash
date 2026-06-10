@@ -80,13 +80,29 @@ serve(async (req) => {
     } catch (error) {
         console.error('Error in fetch-conversions:', error)
         return new Response(
-            JSON.stringify({ error: error.message }),
+            JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
             { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500 }
         )
     }
 })
 
-async function fetchAmazonOrders(store: any, supabaseClient: any) {
+interface StoreRecord {
+    id: string;
+    name: string;
+    network_type: string;
+    api_config: Record<string, string> | null;
+}
+
+interface OrderRecord {
+    session_id: string;
+    order_id: string;
+    amount: number;
+    order_value: number;
+    status: string;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchAmazonOrders(store: StoreRecord, supabaseClient: Record<string, any>) {
     /*
      * Amazon Product Advertising API / Associates API integration
      * 
@@ -134,7 +150,8 @@ async function fetchAmazonOrders(store: any, supabaseClient: any) {
     */
 }
 
-async function fetchFlipkartOrders(store: any, supabaseClient: any) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchFlipkartOrders(store: StoreRecord, supabaseClient: Record<string, any>) {
     /*
      * Flipkart Affiliate API integration
      * 
@@ -194,7 +211,8 @@ async function fetchFlipkartOrders(store: any, supabaseClient: any) {
     */
 }
 
-async function processOrder(order: any, storeId: string, supabaseClient: any) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function processOrder(order: OrderRecord, storeId: string, supabaseClient: Record<string, any>) {
     try {
         // Find the affiliate click by session_id
         const { data: clickData, error: clickError } = await supabaseClient

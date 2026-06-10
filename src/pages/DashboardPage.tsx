@@ -551,7 +551,7 @@ const DashboardPage = () => {
                     </div>
                   ) : (
                     <div className="divide-y divide-border">
-                      {affiliateClicks.map((click: any) => (
+                      {affiliateClicks.map((click: { id: string; session_id: string | null; clicked_at: string; store?: { name: string; logo_url: string | null } | null }) => (
                         <div key={click.id} className="p-4 flex items-center gap-4">
                           <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center overflow-hidden">
                             {click.store?.logo_url ? (

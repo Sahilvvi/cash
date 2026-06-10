@@ -16,7 +16,7 @@ export interface Store {
   is_trending: boolean;
   is_new: boolean;
   network_type?: string;
-  api_config?: any;
+  api_config?: Record<string, string>;
 }
 
 export const useStores = () => {

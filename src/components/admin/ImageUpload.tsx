@@ -48,9 +48,9 @@ const ImageUpload = ({ value, onChange, folder = "general", placeholder = "Uploa
 
       onChange(data.publicUrl);
       toast.success("Image uploaded successfully");
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Upload error:", error);
-      toast.error(error.message || "Failed to upload image");
+      toast.error(error instanceof Error ? error.message : "Failed to upload image");
     } finally {
       setIsUploading(false);
       if (inputRef.current) {

@@ -22,7 +22,7 @@ export interface Offer18Payout {
     payout: string;
     currency: string;
     model: string;
-    condition: any[][];
+    condition: (string | number)[][];
     rule_id: string;
 }
 
@@ -83,7 +83,7 @@ export interface Offer18Offer {
     click_url: string;
     authorized: string;
     creatives: Offer18Creative[];
-    targeting: any[];
+    targeting: Record<string, string>[];
 }
 
 export interface Offer18Response {
@@ -209,7 +209,7 @@ class Offer18Service {
         });
 
         const text = await resp.text();
-        let data: any;
+        let data: Offer18Response & { error?: string; message?: string };
         try {
             data = JSON.parse(text);
         } catch {

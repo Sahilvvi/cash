@@ -72,13 +72,31 @@ const AdminTracking = () => {
         },
     });
 
-    const filteredClicks = !searchQuery ? clicks : clicks.filter((click: any) =>
+    interface ClickRecord {
+        id: string;
+        session_id: string | null;
+        clicked_at: string;
+        user?: { full_name: string | null; email: string | null } | null;
+        store?: { name: string; logo_url: string | null } | null;
+    }
+
+    interface TransactionRecord {
+        id: string;
+        order_id: string | null;
+        amount: number;
+        status: string;
+        created_at: string;
+        user?: { full_name: string | null; email: string | null } | null;
+        store?: { name: string } | null;
+    }
+
+    const filteredClicks = !searchQuery ? clicks : (clicks as ClickRecord[]).filter((click) =>
         click.user?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         click.user?.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         click.store?.name?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const filteredTransactions = !searchQuery ? transactions : transactions.filter((t: any) =>
+    const filteredTransactions = !searchQuery ? transactions : (transactions as TransactionRecord[]).filter((t) =>
         t.user?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.user?.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         t.store?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -126,7 +144,7 @@ const AdminTracking = () => {
                                     ) : filteredTransactions.length === 0 ? (
                                         <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No transactions found</td></tr>
                                     ) : (
-                                        filteredTransactions.map((t: any) => (
+                                        (filteredTransactions as TransactionRecord[]).map((t) => (
                                             <tr key={t.id} className="border-t border-border hover:bg-muted/30">
                                                 <td className="p-4">
                                                     <div>
@@ -178,7 +196,7 @@ const AdminTracking = () => {
                                     ) : filteredClicks.length === 0 ? (
                                         <tr><td colSpan={4} className="p-8 text-center text-muted-foreground">No clicks found</td></tr>
                                     ) : (
-                                        filteredClicks.map((click: any) => (
+                                        (filteredClicks as ClickRecord[]).map((click) => (
                                             <tr key={click.id} className="border-t border-border hover:bg-muted/30">
                                                 <td className="p-4">
                                                     <div>

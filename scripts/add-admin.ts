@@ -98,8 +98,8 @@ async function addAdminUser(email: string) {
         console.log('='.repeat(50) + '\n');
 
         return true;
-    } catch (error: any) {
-        console.error('❌ Unexpected error:', error.message);
+    } catch (error: unknown) {
+        console.error('❌ Unexpected error:', error instanceof Error ? error.message : error);
         return false;
     }
 }
