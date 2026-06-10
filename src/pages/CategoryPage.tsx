@@ -3,7 +3,7 @@ import Header from "@/components/layout/Header";
 import Footer from "@/components/layout/Footer";
 import StoreCard from "@/components/cards/StoreCard";
 import DealCard from "@/components/cards/DealCard";
-import { useStores } from "@/hooks/useStores";
+import { useStores, type Store } from "@/hooks/useStores";
 import { useDeals } from "@/hooks/useDeals";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ArrowLeft } from "lucide-react";
@@ -44,7 +44,7 @@ const categoryNames: Record<string, string> = {
 };
 
 // Map special slugs to filter criteria
-const categoryFilters: Record<string, (store: any) => boolean> = {
+const categoryFilters: Record<string, (store: Store) => boolean> = {
   "most-popular": (store) => store.is_trending || store.offers_count > 10,
   "cashback-offers": (store) => (store.cashback_percent || 0) >= 50,
   "new-stores": (store) => store.is_new === true,

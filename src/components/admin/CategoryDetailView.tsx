@@ -4,8 +4,20 @@ import { Button } from "@/components/ui/button";
 import { ChevronLeft, Store, Tag, Gift, FolderTree } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
+import type { Database } from "@/integrations/supabase/types";
+
+type CategoryRow = Database["public"]["Tables"]["categories"]["Row"];
+type SubcategoryRow = Database["public"]["Tables"]["subcategories"]["Row"];
+type StoreRow = Database["public"]["Tables"]["stores"]["Row"];
+type GiftCardRow = Database["public"]["Tables"]["gift_cards"]["Row"];
+type DealRow = Database["public"]["Tables"]["deals"]["Row"];
+
+interface DealWithStore extends DealRow {
+  store?: { name: string } | null;
+}
+
 interface CategoryDetailViewProps {
-  category: any;
+  category: CategoryRow;
   onBack: () => void;
 }
 
@@ -107,7 +119,7 @@ const CategoryDetailView = ({ category, onBack }: CategoryDetailViewProps) => {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {subcategories.map((sub: any) => (
+                {(subcategories as SubcategoryRow[]).map((sub) => (
                   <div key={sub.id} className="p-4 flex items-center justify-between">
                     <div>
                       <p className="font-semibold">{sub.name}</p>
@@ -131,7 +143,7 @@ const CategoryDetailView = ({ category, onBack }: CategoryDetailViewProps) => {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {stores.map((store: any) => (
+                {(stores as StoreRow[]).map((store) => (
                   <div key={store.id} className="p-4 flex items-center gap-4">
                     <img
                       src={store.logo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(store.name)}&background=random`}
@@ -160,7 +172,7 @@ const CategoryDetailView = ({ category, onBack }: CategoryDetailViewProps) => {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {deals.map((deal: any) => (
+                {(deals as DealWithStore[]).map((deal) => (
                   <div key={deal.id} className="p-4 flex items-center gap-4">
                     <div className="flex-1">
                       <p className="font-semibold">{deal.title}</p>
@@ -186,7 +198,7 @@ const CategoryDetailView = ({ category, onBack }: CategoryDetailViewProps) => {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {giftCards.map((gc: any) => (
+                {(giftCards as GiftCardRow[]).map((gc) => (
                   <div key={gc.id} className="p-4 flex items-center gap-4">
                     <img
                       src={gc.image_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(gc.brand)}&background=random`}

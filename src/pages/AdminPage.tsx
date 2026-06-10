@@ -2,6 +2,35 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
+
+type StoreRow = Database["public"]["Tables"]["stores"]["Row"];
+type DealRow = Database["public"]["Tables"]["deals"]["Row"];
+type GiftCardRow = Database["public"]["Tables"]["gift_cards"]["Row"];
+type SpinRewardRow = Database["public"]["Tables"]["spin_rewards"]["Row"];
+type BannerRow = Database["public"]["Tables"]["banners"]["Row"];
+type CategoryRow = Database["public"]["Tables"]["categories"]["Row"];
+type SubcategoryRow = Database["public"]["Tables"]["subcategories"]["Row"];
+type ProfileRow = Database["public"]["Tables"]["profiles"]["Row"];
+type SponsorRow = Database["public"]["Tables"]["sponsors"]["Row"];
+type SiteSettingRow = Database["public"]["Tables"]["site_settings"]["Row"];
+
+interface ReferralWithProfiles {
+  id: string;
+  referrer_id: string;
+  referred_id: string;
+  status: string | null;
+  referrer_reward: number | null;
+  referred_reward: number | null;
+  created_at: string;
+  completed_at: string | null;
+  referrer?: { full_name: string | null; email: string | null; referral_code: string | null } | null;
+  referred?: { full_name: string | null; email: string | null } | null;
+}
+
+interface DealWithStore extends DealRow {
+  store?: { name: string } | null;
+}
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,16 +99,16 @@ const AdminPage = () => {
   const [showSponsorModal, setShowSponsorModal] = useState(false);
 
   // Editing states
-  const [editingStore, setEditingStore] = useState<any>(null);
-  const [editingDeal, setEditingDeal] = useState<any>(null);
-  const [editingGiftCard, setEditingGiftCard] = useState<any>(null);
-  const [editingUser, setEditingUser] = useState<any>(null);
-  const [editingSpinReward, setEditingSpinReward] = useState<any>(null);
-  const [editingBanner, setEditingBanner] = useState<any>(null);
-  const [editingCategory, setEditingCategory] = useState<any>(null);
-  const [editingSubcategory, setEditingSubcategory] = useState<any>(null);
-  const [viewingCategory, setViewingCategory] = useState<any>(null);
-  const [editingSponsor, setEditingSponsor] = useState<any>(null);
+  const [editingStore, setEditingStore] = useState<StoreRow | null>(null);
+  const [editingDeal, setEditingDeal] = useState<DealRow | null>(null);
+  const [editingGiftCard, setEditingGiftCard] = useState<GiftCardRow | null>(null);
+  const [editingUser, setEditingUser] = useState<ProfileRow | null>(null);
+  const [editingSpinReward, setEditingSpinReward] = useState<SpinRewardRow | null>(null);
+  const [editingBanner, setEditingBanner] = useState<BannerRow | null>(null);
+  const [editingCategory, setEditingCategory] = useState<CategoryRow | null>(null);
+  const [editingSubcategory, setEditingSubcategory] = useState<SubcategoryRow | null>(null);
+  const [viewingCategory, setViewingCategory] = useState<CategoryRow | null>(null);
+  const [editingSponsor, setEditingSponsor] = useState<SponsorRow | null>(null);
 
   // Forms
   const [storeForm, setStoreForm] = useState({
@@ -328,7 +357,7 @@ const AdminPage = () => {
 
       // Group users by day
       const usersByDay: Record<string, number> = {};
-      usersData.data?.forEach((u: any) => {
+      usersData.data?.forEach((u: { created_at: string }) => {
         const day = new Date(u.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         usersByDay[day] = (usersByDay[day] || 0) + 1;
       });
@@ -336,15 +365,15 @@ const AdminPage = () => {
       // Referral stats
       const referralStats = {
         total: referralsData.data?.length || 0,
-        completed: referralsData.data?.filter((r: any) => r.status === 'completed').length || 0,
-        pending: referralsData.data?.filter((r: any) => r.status === 'pending').length || 0,
-        totalEarnings: referralsData.data?.filter((r: any) => r.status === 'completed').reduce((sum: number, r: any) => sum + Number(r.referrer_reward || 0), 0) || 0,
+        completed: referralsData.data?.filter((r: { status: string | null }) => r.status === 'completed').length || 0,
+        pending: referralsData.data?.filter((r: { status: string | null }) => r.status === 'pending').length || 0,
+        totalEarnings: referralsData.data?.filter((r: { status: string | null }) => r.status === 'completed').reduce((sum: number, r: { referrer_reward: number | null }) => sum + Number(r.referrer_reward || 0), 0) || 0,
       };
 
       // Spins stats
       const spinStats = {
         total: spinsData.data?.length || 0,
-        totalValue: spinsData.data?.reduce((sum: number, s: any) => sum + Number(s.reward_value || 0), 0) || 0,
+        totalValue: spinsData.data?.reduce((sum: number, s: { reward_value: number | null }) => sum + Number(s.reward_value || 0), 0) || 0,
       };
 
       // Generate chart data for last 7 days
@@ -366,7 +395,7 @@ const AdminPage = () => {
 
   // Mutations
   const saveStore = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       if (editingStore) {
         const { error } = await supabase.from("stores").update(data).eq("id", editingStore.id);
         if (error) throw error;
@@ -381,7 +410,7 @@ const AdminPage = () => {
       setEditingStore(null);
       toast.success(editingStore ? "Store updated!" : "Store created!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteStore = useMutation({
@@ -396,7 +425,7 @@ const AdminPage = () => {
   });
 
   const saveDeal = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       if (editingDeal) {
         const { error } = await supabase.from("deals").update(data).eq("id", editingDeal.id);
         if (error) throw error;
@@ -411,7 +440,7 @@ const AdminPage = () => {
       setEditingDeal(null);
       toast.success(editingDeal ? "Deal updated!" : "Deal created!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteDeal = useMutation({
@@ -426,7 +455,7 @@ const AdminPage = () => {
   });
 
   const saveGiftCard = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       if (editingGiftCard) {
         const { error } = await supabase.from("gift_cards").update(data).eq("id", editingGiftCard.id);
         if (error) throw error;
@@ -441,7 +470,7 @@ const AdminPage = () => {
       setEditingGiftCard(null);
       toast.success(editingGiftCard ? "Gift card updated!" : "Gift card created!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteGiftCard = useMutation({
@@ -456,7 +485,7 @@ const AdminPage = () => {
   });
 
   const saveSpinReward = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       if (editingSpinReward) {
         const { error } = await supabase.from("spin_rewards").update(data).eq("id", editingSpinReward.id);
         if (error) throw error;
@@ -471,7 +500,7 @@ const AdminPage = () => {
       setEditingSpinReward(null);
       toast.success(editingSpinReward ? "Reward updated!" : "Reward created!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteSpinReward = useMutation({
@@ -486,7 +515,7 @@ const AdminPage = () => {
   });
 
   const saveBanner = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       if (editingBanner) {
         const { error } = await supabase.from("banners").update(data).eq("id", editingBanner.id);
         if (error) throw error;
@@ -501,7 +530,7 @@ const AdminPage = () => {
       setEditingBanner(null);
       toast.success(editingBanner ? "Banner updated!" : "Banner created!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteBanner = useMutation({
@@ -516,7 +545,7 @@ const AdminPage = () => {
   });
 
   const saveCategory = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       if (editingCategory) {
         const { error } = await supabase.from("categories").update(data).eq("id", editingCategory.id);
         if (error) throw error;
@@ -531,7 +560,7 @@ const AdminPage = () => {
       setEditingCategory(null);
       toast.success(editingCategory ? "Category updated!" : "Category created!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteCategory = useMutation({
@@ -546,7 +575,7 @@ const AdminPage = () => {
   });
 
   const saveSubcategory = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       if (editingSubcategory) {
         const { error } = await supabase.from("subcategories").update(data).eq("id", editingSubcategory.id);
         if (error) throw error;
@@ -561,7 +590,7 @@ const AdminPage = () => {
       setEditingSubcategory(null);
       toast.success(editingSubcategory ? "Subcategory updated!" : "Subcategory created!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteSubcategory = useMutation({
@@ -576,7 +605,7 @@ const AdminPage = () => {
   });
 
   const saveSponsor = useMutation({
-    mutationFn: async (data: any) => {
+    mutationFn: async (data: Record<string, unknown>) => {
       if (editingSponsor) {
         const { error } = await supabase.from("sponsors").update(data).eq("id", editingSponsor.id);
         if (error) throw error;
@@ -591,7 +620,7 @@ const AdminPage = () => {
       setEditingSponsor(null);
       toast.success(editingSponsor ? "Sponsor updated!" : "Sponsor created!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const deleteSponsor = useMutation({
@@ -614,12 +643,12 @@ const AdminPage = () => {
       queryClient.invalidateQueries({ queryKey: ["admin_site_settings"] });
       toast.success("Setting updated!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const updateUser = useMutation({
-    mutationFn: async (data: any) => {
-      const { error } = await supabase.from("profiles").update(data).eq("id", editingUser.id);
+    mutationFn: async (data: Record<string, unknown>) => {
+      const { error } = await supabase.from("profiles").update(data).eq("id", editingUser!.id);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -628,12 +657,12 @@ const AdminPage = () => {
       setEditingUser(null);
       toast.success("User updated!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const updateReferralStatus = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      const updateData: any = { status };
+      const updateData: Record<string, string> = { status };
       if (status === 'completed') {
         updateData.completed_at = new Date().toISOString();
       }
@@ -644,7 +673,7 @@ const AdminPage = () => {
       queryClient.invalidateQueries({ queryKey: ["admin_referrals"] });
       toast.success("Referral status updated!");
     },
-    onError: (error: any) => toast.error(error.message),
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const CHART_COLORS = ['hsl(var(--primary))', 'hsl(var(--success))', 'hsl(var(--warning))', 'hsl(var(--destructive))'];
@@ -896,7 +925,7 @@ const AdminPage = () => {
             <div className="bg-card rounded-xl p-6 shadow-card">
               <h3 className="text-lg font-semibold mb-4">Recent Referrals</h3>
               <div className="divide-y divide-border">
-                {referrals.slice(0, 5).map((ref: any) => (
+                {(referrals as ReferralWithProfiles[]).slice(0, 5).map((ref) => (
                   <div key={ref.id} className="py-3 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${ref.status === 'completed' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
@@ -930,7 +959,7 @@ const AdminPage = () => {
               </Button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {banners.map((banner: any) => (
+              {(banners as BannerRow[]).map((banner) => (
                 <div key={banner.id} className="bg-card rounded-xl shadow-card overflow-hidden">
                   <img src={banner.image_url} alt={banner.title} className="w-full h-40 object-cover" onError={(e) => { e.currentTarget.src = 'https://via.placeholder.com/400x160'; }} />
                   <div className="p-4">
@@ -979,7 +1008,7 @@ const AdminPage = () => {
               </Button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {sponsors.map((sponsor: any) => (
+              {(sponsors as SponsorRow[]).map((sponsor) => (
                 <div key={sponsor.id} className="bg-card rounded-xl shadow-card overflow-hidden p-4">
                   <div className="flex items-center gap-4">
                     <img
@@ -1044,7 +1073,7 @@ const AdminPage = () => {
               <h2 className="text-lg font-semibold mb-3">Categories</h2>
               <div className="bg-card rounded-xl shadow-card overflow-hidden mb-6">
                 <div className="divide-y divide-border">
-                  {categories.map((cat: any) => (
+                  {(categories as CategoryRow[]).map((cat) => (
                     <div key={cat.id} className="p-4 flex items-center gap-4">
                       <div className={`w-10 h-10 rounded-full ${cat.color} flex items-center justify-center`}>
                         <Grid className="w-5 h-5" />
@@ -1077,7 +1106,7 @@ const AdminPage = () => {
                   {subcategories.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground">No subcategories yet</div>
                   ) : (
-                    subcategories.map((sub: any) => (
+                    (subcategories as SubcategoryRow[]).map((sub) => (
                       <div key={sub.id} className="p-4 flex items-center gap-4">
                         <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
                           <FolderTree className="w-5 h-5 text-muted-foreground" />
@@ -1121,7 +1150,7 @@ const AdminPage = () => {
                 </div>
               </div>
               <div className="divide-y divide-border">
-                {stores.filter((s: any) => s.name.toLowerCase().includes(searchQuery.toLowerCase())).map((store: any) => (
+                {(stores as StoreRow[]).filter((s) => s.name.toLowerCase().includes(searchQuery.toLowerCase())).map((store) => (
                   <div key={store.id} className="p-4 flex items-center gap-4">
                     <img src={store.logo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(store.name)}&background=random`} alt={store.name} className="w-12 h-12 rounded-lg object-contain bg-muted" />
                     <div className="flex-1">
@@ -1155,7 +1184,7 @@ const AdminPage = () => {
             </div>
             <div className="bg-card rounded-xl shadow-card overflow-hidden">
               <div className="divide-y divide-border">
-                {deals.map((deal: any) => (
+                {(deals as DealWithStore[]).map((deal) => (
                   <div key={deal.id} className="p-4 flex items-center gap-4">
                     <div className="flex-1">
                       <p className="font-semibold">{deal.title}</p>
@@ -1198,7 +1227,7 @@ const AdminPage = () => {
                 </div>
               </div>
               <div className="divide-y divide-border">
-                {users.filter((u: any) => (u.full_name?.toLowerCase() || "").includes(searchQuery.toLowerCase()) || (u.email?.toLowerCase() || "").includes(searchQuery.toLowerCase())).map((u: any) => (
+                {(users as ProfileRow[]).filter((u) => (u.full_name?.toLowerCase() || "").includes(searchQuery.toLowerCase()) || (u.email?.toLowerCase() || "").includes(searchQuery.toLowerCase())).map((u) => (
                   <div key={u.id} className="p-4 flex items-center gap-4">
                     <img src={u.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.full_name || u.email || "U")}&background=random`} alt={u.full_name || "User"} className="w-12 h-12 rounded-full object-cover bg-muted" />
                     <div className="flex-1">
@@ -1262,12 +1291,12 @@ const AdminPage = () => {
                 </div>
               </div>
               <div className="divide-y divide-border">
-                {referrals.filter((r: any) =>
+                {(referrals as ReferralWithProfiles[]).filter((r) =>
                   (r.referrer?.full_name?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
                   (r.referrer?.email?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
                   (r.referred?.full_name?.toLowerCase() || "").includes(searchQuery.toLowerCase()) ||
                   (r.referred?.email?.toLowerCase() || "").includes(searchQuery.toLowerCase())
-                ).map((ref: any) => (
+                ).map((ref) => (
                   <div key={ref.id} className="p-4 flex items-center gap-4">
                     <div className={`w-12 h-12 rounded-full flex items-center justify-center ${ref.status === 'completed' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'}`}>
                       {ref.status === 'completed' ? <UserCheck className="w-6 h-6" /> : <Clock className="w-6 h-6" />}
@@ -1319,7 +1348,7 @@ const AdminPage = () => {
             <h1 className="text-2xl font-bold font-heading mb-6">Site Settings</h1>
             <div className="bg-card rounded-xl shadow-card overflow-hidden">
               <div className="divide-y divide-border">
-                {siteSettings.map((setting: any) => (
+                {(siteSettings as SiteSettingRow[]).map((setting) => (
                   <div key={setting.id} className="p-4">
                     <div className="flex items-center justify-between mb-2">
                       <div>
@@ -1376,11 +1405,11 @@ const AdminPage = () => {
             <div className="grid grid-cols-2 gap-4">
               <select value={storeForm.category_id} onChange={(e) => { setStoreForm({ ...storeForm, category_id: e.target.value, subcategory_id: "" }); }} className="border border-input rounded-md px-3 py-2 bg-background">
                 <option value="">Select Category</option>
-                {categories.map((cat: any) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+                {(categories as CategoryRow[]).map((cat) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
               </select>
               <select value={storeForm.subcategory_id} onChange={(e) => setStoreForm({ ...storeForm, subcategory_id: e.target.value })} className="border border-input rounded-md px-3 py-2 bg-background">
                 <option value="">Select Subcategory</option>
-                {subcategories.filter((sub: any) => sub.category_id === storeForm.category_id).map((sub: any) => <option key={sub.id} value={sub.id}>{sub.name}</option>)}
+                {(subcategories as SubcategoryRow[]).filter((sub) => sub.category_id === storeForm.category_id).map((sub) => <option key={sub.id} value={sub.id}>{sub.name}</option>)}
               </select>
             </div>
             <Input placeholder="Affiliate URL" value={storeForm.affiliate_url} onChange={(e) => setStoreForm({ ...storeForm, affiliate_url: e.target.value })} />
@@ -1395,7 +1424,7 @@ const AdminPage = () => {
               slug: storeForm.slug || storeForm.name.toLowerCase().replace(/\s+/g, "-"),
               category_id: storeForm.category_id || null,
               subcategory_id: storeForm.subcategory_id || null,
-              category: categories.find((c: any) => c.id === storeForm.category_id)?.name || storeForm.category
+              category: (categories as CategoryRow[]).find((c) => c.id === storeForm.category_id)?.name || storeForm.category
             })} className="w-full" disabled={saveStore.isPending}>
               {saveStore.isPending ? "Saving..." : "Save Store"}
             </Button>
@@ -1427,7 +1456,7 @@ const AdminPage = () => {
           <div className="space-y-4 py-4">
             <select value={dealForm.store_id} onChange={(e) => setDealForm({ ...dealForm, store_id: e.target.value })} className="w-full border border-input rounded-md px-3 py-2 bg-background">
               <option value="">Select Store</option>
-              {stores.map((store: any) => <option key={store.id} value={store.id}>{store.name}</option>)}
+              {(stores as StoreRow[]).map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
             </select>
             <Input placeholder="Deal Title" value={dealForm.title} onChange={(e) => setDealForm({ ...dealForm, title: e.target.value })} />
             <Textarea placeholder="Description" value={dealForm.description} onChange={(e) => setDealForm({ ...dealForm, description: e.target.value })} />
@@ -1436,11 +1465,11 @@ const AdminPage = () => {
             <div className="grid grid-cols-2 gap-4">
               <select value={dealForm.category_id} onChange={(e) => { setDealForm({ ...dealForm, category_id: e.target.value, subcategory_id: "" }); }} className="border border-input rounded-md px-3 py-2 bg-background">
                 <option value="">Select Category</option>
-                {categories.map((cat: any) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+                {(categories as CategoryRow[]).map((cat) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
               </select>
               <select value={dealForm.subcategory_id} onChange={(e) => setDealForm({ ...dealForm, subcategory_id: e.target.value })} className="border border-input rounded-md px-3 py-2 bg-background">
                 <option value="">Select Subcategory</option>
-                {subcategories.filter((sub: any) => sub.category_id === dealForm.category_id).map((sub: any) => <option key={sub.id} value={sub.id}>{sub.name}</option>)}
+                {(subcategories as SubcategoryRow[]).filter((sub) => sub.category_id === dealForm.category_id).map((sub) => <option key={sub.id} value={sub.id}>{sub.name}</option>)}
               </select>
             </div>
             <div className="flex gap-4">
@@ -1560,7 +1589,7 @@ const AdminPage = () => {
           <div className="space-y-4 py-4">
             <select value={subcategoryForm.category_id} onChange={(e) => setSubcategoryForm({ ...subcategoryForm, category_id: e.target.value })} className="w-full border border-input rounded-md px-3 py-2 bg-background">
               <option value="">Select Parent Category</option>
-              {categories.map((cat: any) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
+              {(categories as CategoryRow[]).map((cat) => <option key={cat.id} value={cat.id}>{cat.name}</option>)}
             </select>
             <Input placeholder="Subcategory Name" value={subcategoryForm.name} onChange={(e) => setSubcategoryForm({ ...subcategoryForm, name: e.target.value })} />
             <Input placeholder="Slug" value={subcategoryForm.slug} onChange={(e) => setSubcategoryForm({ ...subcategoryForm, slug: e.target.value })} />
