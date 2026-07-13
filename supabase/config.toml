@@ -1,1 +1,11 @@
 project_id = "cikmdkkngifzpulrwkwt"
+
+# Affiliate networks (Offer18 etc.) fire postbacks with NO Authorization
+# header. With the default verify_jwt = true, the Supabase gateway rejects
+# them with 401 before track-conversion ever runs. Auth for this endpoint
+# is handled inside the function via the POSTBACK_SECRET token instead.
+#
+# NOTE: also deploy with the flag so the setting takes effect:
+#   supabase functions deploy track-conversion --no-verify-jwt
+[functions.track-conversion]
+verify_jwt = false
