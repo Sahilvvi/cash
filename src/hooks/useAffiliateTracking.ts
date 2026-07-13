@@ -39,8 +39,12 @@ export const useTrackAffiliateClick = () => {
           finalUrl = `${finalUrl}${separator}affid=${affiliateId}&affExtParam1=${sessionId}`;
 
         } else if (networkType === 'offer18') {
-          // Offer18 uses 's1' for sub affiliate / session tracking by default
-          finalUrl = `${finalUrl}${separator}s1=${sessionId}`;
+          // Offer18: pass the session id in BOTH params.
+          //  - s1: available as the {s1} macro in live postback URLs
+          //  - aff_click_id: the field the affiliate reports API returns,
+          //    which reconcile-conversions matches against. Without it,
+          //    reconciliation can never link a conversion to this click.
+          finalUrl = `${finalUrl}${separator}s1=${sessionId}&aff_click_id=${sessionId}`;
 
         } else {
           // Generic postback network - use configurable param name or default to 'subid'
