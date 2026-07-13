@@ -196,13 +196,25 @@ async function testPostbackFlow() {
         `${SUPABASE_URL}/functions/v1/track-conversion` +
         `?session_id=${sessionId}&amount=${amount}&order_id=${orderId}&status=pending${tokenQS}`;
 
-    const pb1 = await fetch(postbackUrl, { headers: HEADERS_ADMIN });
-    const pb1Json = await pb1.json();
-    assert(pb1.status === 200, `postback #1 → 200 (got ${pb1.status})`);
+    // IMPORTANT: postbacks are sent WITHOUT any Authorization header,
+    // exactly like a real affiliate network would. This catches the
+    // verify_jwt misconfiguration: if the function is deployed with JWT
+    // verification enabled, the gateway 401s here and this test fails —
+    // which is the correct outcome, because real postbacks would be
+    // silently dropped in production.
+    const pb1 = await fetch(postbackUrl);
+    const pb1Json = await pb1.json().catch(() => ({}));
+    assert(
+        pb1.status === 200,
+        `postback #1 (no auth header, like a real network) → 200 (got ${pb1.status}` +
+        (pb1.status === 401
+            ? ` — deploy track-conversion with --no-verify-jwt / verify_jwt=false in config.toml)`
+            : `)`)
+    );
     assert(pb1Json?.duplicate === false, `postback #1 duplicate=false`);
     assert(Number(pb1Json?.transaction?.amount) === amount, `postback #1 amount=${amount}`);
 
-    const pb2 = await fetch(postbackUrl, { headers: HEADERS_ADMIN });
+    const pb2 = await fetch(postbackUrl);
     const pb2Json = await pb2.json();
     assert(pb2Json?.duplicate === true, `postback #2 duplicate=true (idempotent)`);
 
