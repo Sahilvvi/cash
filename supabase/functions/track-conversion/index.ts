@@ -2,6 +2,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
 import { reportToSentry } from '../_shared/sentry.ts'
+import {
+    pickSessionId,
+    pickOrderId,
+    pickAmount,
+    pickOrderAmount,
+    normalizeStatus,
+    isKnownStatus,
+    orderIdOrSurrogate,
+} from '../_shared/postback.ts'
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -56,8 +65,8 @@ serve(async (req) => {
                 reason,
                 message: message?.slice(0, 1024) ?? null,
                 query: sanitisedQuery,
-                session_id: params.session_id ?? params.subid ?? params.click_id ?? null,
-                order_id:   params.order_id ?? null,
+                session_id: pickSessionId(params),
+                order_id:   pickOrderId(params, pickSessionId(params)),
                 network:    params.network_type ?? null,
                 ip,
                 user_agent: userAgent,
@@ -97,15 +106,12 @@ serve(async (req) => {
             }
         }
 
-        // Support multiple parameter names for session_id
-        const sessionId = params.session_id ||
-            params.subid ||
-            params.linkId ||  // Amazon
-            params.affExtParam1 || // Flipkart
-            params.click_id ||
-            params.transaction_id
-
-        const { amount, order_id, status } = params
+        // Networks disagree on every parameter name (see _shared/postback.ts).
+        // Resolve the click id first so `pickOrderId` can avoid re-using the
+        // same param as the order id.
+        const sessionId = pickSessionId(params)
+        const rawOrderId = pickOrderId(params, sessionId)
+        const status = params.status
 
         if (!sessionId) {
             console.error('Missing session identifier in params:', Object.keys(params))
@@ -156,9 +162,35 @@ serve(async (req) => {
 
         // 2. Hand off to the state-machine RPC.
         const networkType = clickData.network_type || params.network_type || 'generic_postback'
-        const transactionStatus = status || 'pending'
-        const cashbackAmount = parseFloat(amount) || 0
-        const orderAmount = params.order_amount ? parseFloat(params.order_amount) : null
+
+        // `apply_postback_state` RAISEs on any status outside its
+        // four-state vocabulary, so a postback carrying `Approved` / `1` /
+        // `sale` used to come back 500 and the conversion was lost.
+        // Normalise here; unknown values land on `pending`, which is
+        // recoverable by the next postback or by reconciliation.
+        const transactionStatus = normalizeStatus(status)
+        if (!isKnownStatus(status)) {
+            console.warn(
+                `Unrecognised status "${status}" from ${networkType}; ` +
+                `recording as pending`
+            )
+        }
+
+        const cashbackAmount = pickAmount(params)
+        const orderAmount = pickOrderAmount(params)
+
+        // Without an order_id the RPC skips its idempotency lookup entirely,
+        // so every network retry would insert a fresh row. Derive a stable
+        // surrogate from the click instead.
+        const { orderId, synthesized } = orderIdOrSurrogate(
+            rawOrderId, networkType, sessionId
+        )
+        if (synthesized) {
+            console.warn(
+                `Postback for session ${sessionId} carried no order id; ` +
+                `using surrogate ${orderId}`
+            )
+        }
 
         const { data: rpcRows, error: rpcError } = await supabaseClient.rpc(
             'apply_postback_state',
@@ -166,11 +198,17 @@ serve(async (req) => {
                 p_user_id:      clickData.user_id,
                 p_store_id:     clickData.store_id,
                 p_amount:       cashbackAmount,
-                p_order_id:     order_id ?? null,
+                p_order_id:     orderId,
                 p_network_type: networkType,
                 p_status:       transactionStatus,
                 p_order_amount: orderAmount,
-                p_description:  `Cashback for order ${order_id || 'N/A'}`,
+                p_description:  `Cashback for order ${rawOrderId || 'N/A'}`,
+                // Click correlation: lets reconciliation recognise this row
+                // later even though it keys conversions by its own
+                // synthesised order id. Without it the same conversion
+                // arriving through both doors is credited twice.
+                p_session_id:         sessionId,
+                p_order_id_synthetic: synthesized,
             }
         )
 
@@ -209,8 +247,8 @@ serve(async (req) => {
         await reportToSentry(error, {
             fn: 'track-conversion',
             ctx: {
-                session_id: params.session_id ?? params.subid ?? params.click_id ?? null,
-                order_id: params.order_id ?? null,
+                session_id: pickSessionId(params),
+                order_id: pickOrderId(params, pickSessionId(params)),
                 network: params.network_type ?? null,
             },
         })

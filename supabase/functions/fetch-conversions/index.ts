@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
+import { normalizeStatus } from '../_shared/postback.ts'
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -55,7 +56,9 @@ serve(async (req) => {
 
                 // Process each order
                 for (const order of orders) {
-                    const inserted = await processOrder(order, store.id, supabaseClient)
+                    const inserted = await processOrder(
+                        order, store.id, store.network_type, supabaseClient
+                    )
                     if (inserted) totalInserted++
                 }
 
@@ -212,7 +215,12 @@ async function fetchFlipkartOrders(store: StoreRecord, supabaseClient: Record<st
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function processOrder(order: OrderRecord, storeId: string, supabaseClient: Record<string, any>) {
+async function processOrder(
+    order: OrderRecord,
+    storeId: string,
+    networkType: string,
+    supabaseClient: Record<string, any>
+) {
     try {
         // Find the affiliate click by session_id
         const { data: clickData, error: clickError } = await supabaseClient
@@ -227,38 +235,44 @@ async function processOrder(order: OrderRecord, storeId: string, supabaseClient:
             return false
         }
 
-        // Check if transaction already exists
-        const { data: existingTransaction } = await supabaseClient
-            .from('cashback_transactions')
-            .select('id')
-            .eq('user_id', clickData.user_id)
-            .eq('order_id', order.order_id)
-            .maybeSingle()
+        // Route through the same state machine the live postback uses.
+        //
+        // The previous direct INSERT omitted `network_type`, which
+        // migration 20260417080000 made NOT NULL — so every insert here
+        // would have failed outright. It also hand-rolled a duplicate
+        // check on (user_id, order_id) that didn't match the real
+        // idempotency key, and could never move a row from pending to
+        // confirmed on a later poll. apply_postback_state handles both.
+        const { data: rpcRows, error: rpcError } = await supabaseClient.rpc(
+            'apply_postback_state',
+            {
+                p_user_id:      clickData.user_id,
+                p_store_id:     storeId,
+                p_amount:       order.amount,
+                p_order_id:     order.order_id,
+                p_network_type: networkType,
+                p_status:       normalizeStatus(order.status),
+                p_order_amount: order.order_value ?? null,
+                p_description:  `Cashback for order ${order.order_id}`,
+                // Amazon/Flipkart report real merchant order ids, so this
+                // is never a surrogate.
+                p_session_id:         order.session_id,
+                p_order_id_synthetic: false,
+            }
+        )
 
-        if (existingTransaction) {
-            console.log(`Transaction already exists for order: ${order.order_id}`)
+        if (rpcError) {
+            console.error('apply_postback_state failed:', rpcError)
             return false
         }
 
-        // Insert the cashback transaction
-        const { error: insertError } = await supabaseClient
-            .from('cashback_transactions')
-            .insert({
-                user_id: clickData.user_id,
-                store_id: storeId,
-                amount: order.amount,
-                order_amount: order.order_value,
-                order_id: order.order_id,
-                status: order.status || 'pending',
-                description: `Cashback for order ${order.order_id}`,
-            })
-
-        if (insertError) {
-            console.error('Error inserting transaction:', insertError)
+        const action = (Array.isArray(rpcRows) ? rpcRows[0] : rpcRows)?.action
+        if (action === 'noop' || action === 'rejected_backward') {
+            console.log(`Order ${order.order_id} already recorded (${action})`)
             return false
         }
 
-        console.log(`✓ Inserted transaction for order: ${order.order_id}, amount: ${order.amount}`)
+        console.log(`✓ ${action} transaction for order: ${order.order_id}, amount: ${order.amount}`)
         return true
 
     } catch (error) {

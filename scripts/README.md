@@ -1,5 +1,29 @@
 # Ops scripts
 
+## `diagnose-cashback.sql`
+
+Read-only triage for "clicks are tracked but no cashback is recorded". Paste
+it into the Supabase SQL Editor and work down the sections — the first one
+that comes back empty or wrong tells you which stage of the pipeline is
+broken:
+
+1. clicks landing in `affiliate_clicks`
+2. which tracking param each store's redirect appends (driven by
+   `stores.network_type` — an Offer18 store left on `generic_postback` gets
+   `subid=`, which Offer18 ignores, so the postback comes back with no
+   click id)
+3. whether any postback reached the function at all
+4. the last 25 rejected postbacks with the real query string the network
+   sent — usually the fastest way to see the actual param names
+5. what got recorded, by network and status
+6. recent clicks you can replay a postback against by hand
+7. whether nightly reconciliation is scheduled
+
+Section 3 also covers the failure that leaves no trace anywhere: if
+`track-conversion` was deployed without `--no-verify-jwt`, the Supabase
+gateway 401s every postback before the function runs, so there is nothing in
+`postback_errors` and nothing in the function logs.
+
 ## `verify-postback-flow.mjs`
 
 End-to-end test for the cashback attribution pipeline. Creates a throwaway

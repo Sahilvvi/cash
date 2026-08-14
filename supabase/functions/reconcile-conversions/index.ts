@@ -1,6 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1'
 import { reportToSentry } from '../_shared/sentry.ts'
+// Single source of truth for network status vocabularies, shared with
+// track-conversion. Mirrored in SQL as public.cashback_normalize_status().
+import { normalizeStatus } from '../_shared/postback.ts'
 
 /**
  * Reconciliation job for Offer18.
@@ -51,19 +54,6 @@ interface ApplyPostbackResult {
     transaction_id: string
     final_status: string
     action: 'inserted' | 'transitioned' | 'noop' | 'rejected_backward'
-}
-
-// Map Offer18's status vocabulary to our four-state machine. Offer18
-// uses words like "pending", "approved", "rejected", "confirmed",
-// "reversed" depending on the merchant; everything we don't recognize
-// gets dropped to 'pending' so we never incorrectly credit a user.
-function mapOffer18Status(raw: string | undefined): string {
-    if (!raw) return 'pending'
-    const s = String(raw).toLowerCase().trim()
-    if (s === 'confirmed' || s === 'paid' || s === 'closed') return 'confirmed'
-    if (s === 'approved' || s === 'validated') return 'approved'
-    if (s === 'reversed' || s === 'rejected' || s === 'declined' || s === 'refunded') return 'reversed'
-    return 'pending'
 }
 
 serve(async (req) => {
@@ -203,7 +193,7 @@ serve(async (req) => {
             // network considers real, so we treat them as confirmed.
             // Anything that is later reversed will arrive as a separate
             // postback and the state machine will downgrade it.
-            const status = mapOffer18Status('confirmed')
+            const status = normalizeStatus('confirmed')
             const amount = Number(conv.Affiliate_Price ?? conv.affiliate_price ?? 0)
 
             const { data: rpcRows, error: rpcErr } = await supabaseClient.rpc(
@@ -217,6 +207,14 @@ serve(async (req) => {
                     p_status:       status,
                     p_order_amount: null,
                     p_description:  `Reconciled from Offer18 report (${conv.OfferID ?? conv.offer ?? 'unknown offer'})`,
+                    // `orderId` here is always a surrogate — Offer18's
+                    // affiliate reports never expose the merchant's
+                    // transaction id. Flagging it as synthetic lets the RPC
+                    // match this against a live postback's row for the same
+                    // click instead of creating a second, double-crediting
+                    // row under a different key.
+                    p_session_id:         sessionId,
+                    p_order_id_synthetic: true,
                 }
             )
 

@@ -25,6 +25,17 @@
  *      2. Call spin_wheel() again within 24h → cooldown error.
  *      3. Direct INSERT into user_spins (as user) → RLS rejection.
  *
+ *   I. Network parameter/status vocabulary
+ *      1. status=Approved / 1 / unknown are normalised, not rejected.
+ *      2. Offer18 macro names (s1, aff_click_id, payout) are honoured.
+ *      3. A postback with no order_id records once and stays idempotent.
+ *
+ *   J. Live/reconcile double-credit guard
+ *      1. Live postback then reconciliation → one row, real order id kept.
+ *      2. Reconciliation then live postback → one row, placeholder upgraded.
+ *      3. Two real orders from one click stay two rows.
+ *      4. The legacy 8-argument RPC signature still resolves.
+ *
  *   D. Referral trigger
  *      1. Create two users; second signs up with referred_by = first's
  *         profile id.
@@ -1091,6 +1102,265 @@ async function testHealthAndSchedules() {
         `admin_scheduled_jobs: both jobs are active`);
 }
 
+// I. Network parameter/status vocabulary tolerance -------------------------
+//   Regression guard for the "clicks tracked, cashback never recorded"
+//   bug. track-conversion used to read exactly one name per field and
+//   hand `status` to apply_postback_state verbatim — and that RPC RAISEs
+//   on anything outside pending/approved/confirmed/reversed. So a real
+//   Offer18 postback carrying `status=Approved` (or `1`, or `Sale`), or
+//   carrying `payout=` instead of `amount=`, or `s1=` instead of
+//   `session_id=`, produced a 500 and no cashback row — while the
+//   affiliate_clicks row for that session looked perfectly healthy.
+async function testNetworkVocabulary() {
+    console.log("\n=== I. Network parameter/status vocabulary ===");
+
+    const stores = await rest("/rest/v1/stores?select=id&is_active=eq.true&limit=1");
+    const storeId = stores.json?.[0]?.id;
+    if (!storeId) {
+        assert(false, "no active stores in DB to anchor affiliate_clicks");
+        return;
+    }
+    const tokenQS = POSTBACK_SECRET ? `&token=${encodeURIComponent(POSTBACK_SECRET)}` : "";
+
+    // Seed a click and fire a postback built from `qs`, which the caller
+    // writes the way a real network template would.
+    const fireWith = async (label, qs) => {
+        const user = await createUser(`vocab-${label}`);
+        const sessionId = randomUUID();
+        await rest("/rest/v1/affiliate_clicks", {
+            method: "POST",
+            body: JSON.stringify({
+                user_id: user.id, store_id: storeId,
+                session_id: sessionId, network_type: "offer18",
+            }),
+        });
+        const r = await fetch(
+            `${SUPABASE_URL}/functions/v1/track-conversion?${qs(sessionId)}${tokenQS}`
+        );
+        const body = await r.json().catch(() => ({}));
+        return { user, sessionId, status: r.status, body };
+    };
+
+    // I.1 Capitalised status — the exact shape that used to 500.
+    {
+        const o = `VOCAB-CAP-${Date.now()}`;
+        const r = await fireWith("cap", (s) =>
+            `session_id=${s}&amount=50&order_id=${o}&status=Approved`);
+        assert(r.status === 200, `status=Approved → 200 (got ${r.status})`);
+        assert(r.body?.action === "inserted", `status=Approved recorded (action=${r.body?.action})`);
+        assert(r.body?.status === "approved", `status=Approved normalised to approved (got ${r.body?.status})`);
+    }
+
+    // I.2 Numeric status vocabulary.
+    {
+        const o = `VOCAB-NUM-${Date.now()}`;
+        const r = await fireWith("num", (s) =>
+            `session_id=${s}&amount=50&order_id=${o}&status=1`);
+        assert(r.status === 200, `status=1 → 200 (got ${r.status})`);
+        assert(r.body?.status === "approved", `status=1 normalised to approved (got ${r.body?.status})`);
+    }
+
+    // I.3 Unknown status must park on pending, never reject the postback.
+    {
+        const o = `VOCAB-UNK-${Date.now()}`;
+        const r = await fireWith("unk", (s) =>
+            `session_id=${s}&amount=50&order_id=${o}&status=some-new-word`);
+        assert(r.status === 200, `unknown status → 200 (got ${r.status})`);
+        assert(r.body?.status === "pending", `unknown status parked on pending (got ${r.body?.status})`);
+    }
+
+    // I.4 Offer18 macro names: s1 for the click id, payout for the amount.
+    {
+        const o = `VOCAB-S1-${Date.now()}`;
+        const r = await fireWith("s1", (s) =>
+            `s1=${s}&payout=77.5&order_id=${o}&status=approved`);
+        assert(r.status === 200, `s1 + payout → 200 (got ${r.status})`);
+        assert(Number(r.body?.transaction?.amount) === 77.5,
+            `payout read as amount (got ${r.body?.transaction?.amount})`);
+    }
+
+    // I.5 aff_click_id is the other name Offer18 reports the click under.
+    {
+        const o = `VOCAB-ACI-${Date.now()}`;
+        const r = await fireWith("aci", (s) =>
+            `aff_click_id=${s}&amount=10&order_id=${o}&status=approved`);
+        assert(r.status === 200, `aff_click_id → 200 (got ${r.status})`);
+        assert(r.body?.action === "inserted", `aff_click_id recorded (action=${r.body?.action})`);
+    }
+
+    // I.6 No order_id at all: must still record, and a retry must NOT
+    //     double-credit (the surrogate order id keeps idempotency).
+    {
+        const first = await fireWith("noorder", (s) =>
+            `session_id=${s}&amount=25&status=approved`);
+        assert(first.status === 200, `no order_id → 200 (got ${first.status})`);
+        assert(first.body?.action === "inserted", `no order_id recorded (action=${first.body?.action})`);
+
+        const retry = await fetch(
+            `${SUPABASE_URL}/functions/v1/track-conversion` +
+            `?session_id=${first.sessionId}&amount=25&status=approved${tokenQS}`
+        );
+        const retryBody = await retry.json().catch(() => ({}));
+        assert(retryBody?.action === "noop",
+            `no order_id retry is idempotent (action=${retryBody?.action})`);
+
+        const rows = await rest(
+            `/rest/v1/cashback_transactions?user_id=eq.${first.user.id}&select=id`
+        );
+        assert(Array.isArray(rows.json) && rows.json.length === 1,
+            `no order_id: exactly 1 row after retry (got ${rows.json?.length})`);
+    }
+}
+
+// J. Live-postback / reconciliation double-credit -------------------------
+//   apply_postback_state de-dupes on (network_type, order_id), but the live
+//   postback keys on the merchant's real order id while reconciliation can
+//   only synthesise "o18:<click>:<stamp>" — Offer18's affiliate reports do
+//   not expose the merchant's transaction id. One conversion, two keys, two
+//   rows, both counting toward the balance. These assertions pin the click
+//   correlation that closes it, in BOTH arrival orders, without merging two
+//   genuinely different orders from the same click.
+async function testDoubleCreditGuard() {
+    console.log("\n=== J. Live/reconcile double-credit guard ===");
+
+    const stores = await rest("/rest/v1/stores?select=id&is_active=eq.true&limit=1");
+    const storeId = stores.json?.[0]?.id;
+    if (!storeId) {
+        assert(false, "no active stores in DB to anchor affiliate_clicks");
+        return;
+    }
+
+    // Call the RPC the way reconcile-conversions does (synthetic order id)
+    // or the way a live postback does (real order id).
+    const applyState = (args) =>
+        rest("/rest/v1/rpc/apply_postback_state", {
+            method: "POST",
+            body: JSON.stringify({
+                p_store_id: storeId,
+                p_amount: 100,
+                p_network_type: "offer18",
+                p_status: "confirmed",
+                p_order_amount: null,
+                p_description: "double-credit guard",
+                ...args,
+            }),
+        });
+
+    const seed = async (label) => {
+        const user = await createUser(`dcg-${label}`);
+        const sessionId = randomUUID();
+        await rest("/rest/v1/affiliate_clicks", {
+            method: "POST",
+            body: JSON.stringify({
+                user_id: user.id, store_id: storeId,
+                session_id: sessionId, network_type: "offer18",
+            }),
+        });
+        return { user, sessionId };
+    };
+
+    const rowsFor = async (userId) => {
+        const r = await rest(
+            `/rest/v1/cashback_transactions?user_id=eq.${userId}&select=id,order_id,amount,status`
+        );
+        return Array.isArray(r.json) ? r.json : [];
+    };
+
+    // J.1 Live postback first, reconciliation second.
+    {
+        const { user, sessionId } = await seed("live-first");
+        const realOrder = `DCG-LIVE-${Date.now()}`;
+
+        await applyState({
+            p_user_id: user.id, p_order_id: realOrder,
+            p_session_id: sessionId, p_order_id_synthetic: false,
+        });
+        const second = await applyState({
+            p_user_id: user.id,
+            p_order_id: `o18:${sessionId}:${Date.now()}`,
+            p_session_id: sessionId, p_order_id_synthetic: true,
+        });
+
+        const action = second.json?.[0]?.action ?? second.json?.action;
+        assert(action === "noop" || action === "rejected_backward",
+            `reconcile after live is not a new insert (action=${action})`);
+
+        const rows = await rowsFor(user.id);
+        assert(rows.length === 1,
+            `live-then-reconcile: exactly 1 row (got ${rows.length})`);
+        assert(rows[0]?.order_id === realOrder,
+            `live-then-reconcile: real order id retained (got ${rows[0]?.order_id})`);
+    }
+
+    // J.2 Reconciliation first, live postback second — the harder direction:
+    //     the real order id is not yet on file, so the live call has to
+    //     claim the placeholder rather than insert alongside it.
+    {
+        const { user, sessionId } = await seed("recon-first");
+        const realOrder = `DCG-RECON-${Date.now()}`;
+
+        await applyState({
+            p_user_id: user.id,
+            p_order_id: `o18:${sessionId}:${Date.now()}`,
+            p_session_id: sessionId, p_order_id_synthetic: true,
+            p_status: "pending",
+        });
+        await applyState({
+            p_user_id: user.id, p_order_id: realOrder,
+            p_session_id: sessionId, p_order_id_synthetic: false,
+        });
+
+        const rows = await rowsFor(user.id);
+        assert(rows.length === 1,
+            `reconcile-then-live: exactly 1 row (got ${rows.length})`);
+        assert(rows[0]?.order_id === realOrder,
+            `reconcile-then-live: placeholder upgraded to real order id (got ${rows[0]?.order_id})`);
+        assert(rows[0]?.status === "confirmed",
+            `reconcile-then-live: status advanced to confirmed (got ${rows[0]?.status})`);
+    }
+
+    // J.3 One click, two genuinely different orders must NOT be merged.
+    //     This is the failure mode the naive "dedupe by click" fix causes.
+    {
+        const { user, sessionId } = await seed("two-orders");
+        const stamp = Date.now();
+
+        await applyState({
+            p_user_id: user.id, p_order_id: `DCG-A-${stamp}`,
+            p_session_id: sessionId, p_order_id_synthetic: false,
+        });
+        await applyState({
+            p_user_id: user.id, p_order_id: `DCG-B-${stamp}`,
+            p_session_id: sessionId, p_order_id_synthetic: false,
+        });
+
+        const rows = await rowsFor(user.id);
+        assert(rows.length === 2,
+            `two real orders from one click stay separate (got ${rows.length})`);
+    }
+
+    // J.4 The 8-argument signature still resolves and still works, so an
+    //     edge function running the previous deploy is not broken by the
+    //     migration landing first.
+    {
+        const { user } = await seed("legacy-arity");
+        const legacy = await rest("/rest/v1/rpc/apply_postback_state", {
+            method: "POST",
+            body: JSON.stringify({
+                p_user_id: user.id, p_store_id: storeId, p_amount: 5,
+                p_order_id: `DCG-LEGACY-${Date.now()}`,
+                p_network_type: "offer18", p_status: "pending",
+                p_order_amount: null, p_description: "legacy arity",
+            }),
+        });
+        assert(legacy.status === 200,
+            `8-arg apply_postback_state still callable (got ${legacy.status}, body=${JSON.stringify(legacy.json)})`);
+        const action = legacy.json?.[0]?.action ?? legacy.json?.action;
+        assert(action === "inserted",
+            `8-arg call still inserts (action=${action})`);
+    }
+}
+
 async function main() {
     try {
         await testPostbackFlow();
@@ -1101,6 +1371,8 @@ async function main() {
         await testFraudHardening();
         await testCashbackStateMachine();
         await testPostbackErrorLog();
+        await testNetworkVocabulary();
+        await testDoubleCreditGuard();
         await testHealthAndSchedules();
     } finally {
         console.log("\nCleaning up…");
