@@ -31,7 +31,7 @@ const getEmailTemplate = (type: string, data: EmailRequest["data"]) => {
               <p style="color: #666; margin: 10px 0 0;">has been added to your wallet</p>
             </div>
             <p>You can now withdraw this amount to your bank account or UPI.</p>
-            <a href="${Deno.env.get("SITE_URL") || "https://paisewaala.lovable.app"}/dashboard" 
+            <a href="${Deno.env.get("SITE_URL") || "https://cashback.com"}/dashboard"
                style="display: inline-block; background: #6366f1; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 20px;">
               View Dashboard
             </a>
